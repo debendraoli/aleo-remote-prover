@@ -22,7 +22,7 @@ A lightweight Warp-based HTTP service that accepts Aleo `Authorization` payloads
 cargo build --release
 
 # Enable GPU proving (requires x86_64 + NVIDIA CUDA stack)
-cargo build --release --features cuda
+CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 CUDAHOSTCXX=/usr/bin/g++-12 cargo build --release --features cuda
 
 # Run the server (defaults to 0.0.0.0:3030)
 ./target/release/remote-prover
@@ -151,11 +151,13 @@ curl -X POST \
 
 ```bash
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-cargo run --release --features cuda
+CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 CUDAHOSTCXX=/usr/bin/g++-12 cargo run --release --features cuda
 # Submit jobs as usual via curl
 ```
 
-> **Heads up:** CUDA support in SnarkVM is currently limited to x86_64 targets with NVIDIA GPUs and the CUDA toolkit installed. Builds will now fail early if you enable `--features cuda` on unsupported architectures (for example Apple Silicon Macs).
+> **Heads up:** CUDA support in SnarkVM is currently limited to x86_64 targets with NVIDIA GPUs and the CUDA toolkit installed. Builds will now fail early if you enable `--features cuda` on unsupported architectures (for example Apple Silicon Macs which I'm running on).
+>
+> Additionally, CUDA 12 currently requires GCC 11/12 as its host compiler. Set `CC`, `CXX`, and `CUDAHOSTCXX` to the GCC 12 toolchain (see commands above) before compiling with `--features cuda` on Linux GPU hosts such as AWS g4dn instances.
 
 ## Broadcasting Transactions Manually
 
