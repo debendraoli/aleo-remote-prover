@@ -1,0 +1,50 @@
+[package]
+name = "remote-prover"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web Server Framework
+warp = "0.3"
+
+# Async Runtime
+# "full" enables multi-threading, which is critical for handling proving tasks + server requests simultaneously.
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP client for optional broadcasting
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
+# .env support (optional)
+dotenvy = "0.15"
+
+# Random Number Generation (Required for blinding factors in ZK proofs)
+rand = "0.8"
+
+# SnarkVM (The Aleo Virtual Machine)
+# We use the git dependency to ensure alignment with the live network (Mainnet).
+# INFO: If you have an NVIDIA GPU, uncomment the `features = ["cuda"]` line below.
+[dependencies.snarkvm]
+git = "https://github.com/ProvableHQ/snarkVM.git"
+branch = "mainnet"
+# default-features = false # Uncomment if you want to minimize build size, but usually not needed.
+
+[features]
+default = []
+# Enable GPU acceleration by building with `cargo build --features cuda` (requires CUDA Toolkit)
+cuda = ["snarkvm/cuda"]
+
+# Optimization Profiles
+# These are CRITICAL for Prover performance. Without them, proving will be 10x-100x slower.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
