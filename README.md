@@ -58,16 +58,13 @@ specify a particular program edition by exporting `AUTHORIZE_EDITION`.
 |----------|---------|-------------|
 | `PROVER_LISTEN_ADDR` | `0.0.0.0:3030` | Bind address for the HTTP server. |
 | `MAX_CONCURRENT_PROOFS` | `available_parallelism()` | Maximum number of proofs executed concurrently (bounded with a semaphore). |
-| `BROADCAST_ENDPOINT` | _unset_ | Default endpoint to POST proof results. Automatically triggers broadcasting unless the request sets `"broadcast": false`. |
-| `BROADCAST_NETWORK` | _unset_ | Optional preset (`mainnet`, `testnet`, `canary`) that maps to a known broadcast endpoint when `BROADCAST_ENDPOINT` is not provided. |
+| `NETWORK` | `mainnet` | Selects the Provable Explorer network used for automatic program fetching and default broadcasting (`mainnet`, `testnet`, `canary`). |
 
 These variables are optional today; the binary will fall back to the defaults shown above. You can define them in a `.env` file (using `dotenvy`) or export them in your shell.
 
 ```bash
 export PROVER_LISTEN_ADDR=127.0.0.1:8080
-export BROADCAST_ENDPOINT=https://api.aleo.org/v1/transactions/broadcast
-# or rely on the preset and let the server pick the canonical URL
-export BROADCAST_NETWORK=testnet
+export NETWORK=testnet
 ```
 
 ## HTTP API
@@ -82,13 +79,13 @@ Execute the provided authorization, returning proof metadata.
 {
   "authorization": "AUTH_STRING",
   "broadcast": true,
-  "broadcast_network": "mainnet"
+  "network": "mainnet"
 }
 ```
 
 - `authorization` – string-form serialization of an Aleo `Authorization`, typically produced by SnarkVM clients via `authorization.to_string()`.
 - `broadcast` – optional boolean. If omitted, the server broadcasts when it has a default endpoint configured. Set to `false` to explicitly skip broadcasting.
-- `broadcast_network` – optional string (`"mainnet"`, `"testnet"`, or `"canary"`). Maps to the canonical Aleo broadcast endpoint for that network and implicitly enables broadcasting.
+- `network` – optional string (`"mainnet"`, `"testnet"`, or `"canary"`). Overrides the server's configured network for fetching programs and selecting the broadcast endpoint.
 
 #### Response Examples
 
@@ -109,7 +106,7 @@ Execute the provided authorization, returning proof metadata.
   },
   "broadcast": {
     "requested": true,
-    "endpoint": "https://api.aleo.org/v1/transactions/broadcast",
+    "endpoint": "https://api.explorer.provable.com/v2/testnet/transaction/broadcast",
     "status": 200,
     "success": true,
     "response": "{\"tx_id\":\"...\"}"
@@ -135,7 +132,7 @@ Execute the provided authorization, returning proof metadata.
 }
 ```
 
-When `BROADCAST_ENDPOINT` is configured, the service will POST a JSON payload containing the proof summary plus the original authorization to the specified endpoint unless the request opts out. Non-2xx responses are logged but do not break the HTTP request.
+By default the service POSTs a JSON payload containing the proof summary plus the original authorization to the canonical Provable Explorer endpoint for the configured `NETWORK` unless the request opts out (`"broadcast": false`). Non-2xx responses are logged but do not break the HTTP request.
 
 ## cURL Examples
 
@@ -152,7 +149,7 @@ curl -X POST \
 ### 2. Proof Submission with Broadcast
 
 ```bash
-export BROADCAST_NETWORK=mainnet
+export NETWORK=mainnet
 ./target/release/remote-prover &
 
 AUTH=$(./authorize_call.sh)
@@ -160,21 +157,32 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d "{\"authorization\": \"${AUTH}\", \"broadcast\": true}" \
   http://localhost:3030/prove
-# The prover will forward the proof + authorization to the broadcast endpoint on success.
+# The prover will forward the proof + authorization to the canonical mainnet endpoint on success.
 ```
 
-### 3. Select the Broadcast Network Per Request
+### 3. Override the Network Per Request
 
 ```bash
 AUTH=$(./authorize_call.sh)
 curl -X POST \
   -H "Content-Type: application/json" \
-  -d "{\"authorization\": \"${AUTH}\", \"broadcast_network\": \"testnet\"}" \
+  -d "{\"authorization\": \"${AUTH}\", \"network\": \"testnet\"}" \
   http://localhost:3030/prove
-# Uses the canonical endpoint for the selected network even if the server has a different default.
+# Fetches programs and broadcasts using the testnet explorer regardless of the server default.
 ```
 
-### 4. GPU-Accelerated Run (CUDA)
+### 4. Skip Broadcasting for a Single Request
+
+```bash
+AUTH=$(./authorize_call.sh)
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"authorization\": \"${AUTH}\", \"broadcast\": false}" \
+  http://localhost:3030/prove
+# Explicitly opts out of broadcasting while still producing the proof summary.
+```
+
+### 5. GPU-Accelerated Run (CUDA)
 
 ```bash
 export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
@@ -196,7 +204,7 @@ curl -X POST \
   -d '{
     "transaction": "{\"id\":\"...\",\"proof\":...}"
   }' \
-  https://api.aleo.org/v1/transactions/broadcast
+  https://api.explorer.provable.com/v2/testnet/transaction/broadcast
 ```
 
 ## Testing

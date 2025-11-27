@@ -1,3 +1,4 @@
+use parking_lot::RwLock;
 use std::{str::FromStr, sync::Arc};
 
 use remote_prover::{
@@ -12,7 +13,9 @@ use warp::http::StatusCode;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn healthcheck_root_returns_ok() {
-    let process = Arc::new(Process::<CurrentNetwork>::load().expect("failed to load process"));
+    let process = Arc::new(RwLock::new(
+        Process::<CurrentNetwork>::load().expect("failed to load process"),
+    ));
     let config = Arc::new(ProverConfig::default());
     let routes = prover_routes(process, config);
 
@@ -49,7 +52,6 @@ function add_public:
     process_instance
         .add_program(&program)
         .expect("failed to add sample program");
-    let process = Arc::new(process_instance);
 
     // Produce an authorization for the program execution.
     let function_name =
@@ -57,7 +59,7 @@ function add_public:
     let mut rng = rand::thread_rng();
     let private_key =
         PrivateKey::<CurrentNetwork>::new(&mut rng).expect("failed to create private key");
-    let authorization = process
+    let authorization = process_instance
         .authorize::<CurrentAleo, _>(
             &private_key,
             program.id(),
@@ -67,13 +69,15 @@ function add_public:
         )
         .expect("failed to authorize execution");
 
+    let process = Arc::new(RwLock::new(process_instance));
+
     let authorization_value = serde_json::from_str(&authorization.to_string())
         .expect("authorization should be valid JSON");
 
     let request_body = ProveRequest {
         authorization: AuthorizationPayload::Json(authorization_value),
         broadcast: Some(false),
-        broadcast_network: None,
+        network: None,
     };
 
     let config = Arc::new(ProverConfig::default());

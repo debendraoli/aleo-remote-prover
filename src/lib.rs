@@ -1,6 +1,14 @@
+use parking_lot::RwLock;
+use reqwest::Url;
 use snarkvm::prelude::*;
 use snarkvm::{circuit, synthesizer::Process};
-use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    net::SocketAddr,
+    str::FromStr,
+    sync::Arc,
+};
 use tokio::sync::Semaphore;
 use warp::{http::StatusCode, Filter};
 
@@ -9,31 +17,41 @@ pub type CurrentAleo = circuit::AleoV0;
 
 #[derive(Copy, Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum BroadcastNetwork {
+pub enum Network {
     Mainnet,
     Testnet,
     Canary,
 }
 
-impl BroadcastNetwork {
-    pub fn default_endpoint(self) -> &'static str {
+impl Network {
+    pub fn base_url(self) -> &'static str {
         match self {
-            BroadcastNetwork::Mainnet => "https://api.aleo.org/v1/transactions/broadcast",
-            BroadcastNetwork::Testnet => "https://api.testnet.aleo.org/v1/transactions/broadcast",
-            BroadcastNetwork::Canary => "https://api.canary.aleo.org/v1/transactions/broadcast",
+            Network::Mainnet => "https://api.explorer.provable.com/v2/mainnet",
+            Network::Testnet => "https://api.explorer.provable.com/v2/testnet",
+            Network::Canary => "https://api.explorer.provable.com/v2/canary",
         }
+    }
+
+    pub fn endpoint(self, path: &str) -> String {
+        let base = self.base_url().trim_end_matches('/');
+        let path = path.trim_start_matches('/');
+        format!("{base}/{path}")
+    }
+
+    pub fn broadcast_endpoint(self) -> String {
+        self.endpoint("transaction/broadcast")
     }
 }
 
-impl FromStr for BroadcastNetwork {
+impl FromStr for Network {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim().to_lowercase().as_str() {
-            "mainnet" => Ok(BroadcastNetwork::Mainnet),
-            "testnet" => Ok(BroadcastNetwork::Testnet),
-            "canary" => Ok(BroadcastNetwork::Canary),
-            other => Err(format!("invalid broadcast network '{other}'")),
+            "mainnet" => Ok(Network::Mainnet),
+            "testnet" => Ok(Network::Testnet),
+            "canary" => Ok(Network::Canary),
+            other => Err(format!("invalid network '{other}'")),
         }
     }
 }
@@ -42,7 +60,7 @@ impl FromStr for BroadcastNetwork {
 pub struct ProverConfig {
     listen_addr: SocketAddr,
     max_concurrent_proofs: usize,
-    broadcast_endpoint: Option<String>,
+    network: Network,
     http_client: reqwest::Client,
 }
 
@@ -56,7 +74,7 @@ impl Default for ProverConfig {
         Self {
             listen_addr,
             max_concurrent_proofs: max_parallel,
-            broadcast_endpoint: None,
+            network: Network::Testnet,
             http_client: reqwest::Client::new(),
         }
     }
@@ -86,26 +104,16 @@ impl ProverConfig {
             }
         }
 
-        if let Ok(endpoint) = env::var("BROADCAST_ENDPOINT") {
-            let trimmed = endpoint.trim();
-            if trimmed.is_empty() {
-                config.broadcast_endpoint = None;
-            } else {
-                config.broadcast_endpoint = Some(trimmed.to_string());
-            }
-        }
-
-        if let Ok(network) = env::var("BROADCAST_NETWORK") {
+        if let Ok(network) = env::var("NETWORK") {
             let trimmed = network.trim();
             if trimmed.is_empty() {
-                config.broadcast_endpoint = None;
+                eprintln!("⚠️  NETWORK is empty, keeping {:?}", config.network);
             } else {
-                match BroadcastNetwork::from_str(trimmed) {
-                    Ok(target) => {
-                        config.broadcast_endpoint = Some(target.default_endpoint().to_string())
-                    }
+                match Network::from_str(trimmed) {
+                    Ok(target) => config.network = target,
                     Err(err) => eprintln!(
-                        "⚠️  Invalid BROADCAST_NETWORK '{network}': {err}. Keeping previous broadcast endpoint"
+                        "⚠️  Invalid NETWORK '{network}': {err}. Keeping {:?}",
+                        config.network
                     ),
                 }
             }
@@ -122,8 +130,16 @@ impl ProverConfig {
         self.max_concurrent_proofs
     }
 
-    pub fn broadcast_endpoint(&self) -> Option<&str> {
-        self.broadcast_endpoint.as_deref()
+    pub fn broadcast_endpoint(&self) -> String {
+        self.network.broadcast_endpoint()
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
+    }
+
+    pub fn api_base(&self) -> &'static str {
+        self.network.base_url()
     }
 
     fn http_client(&self) -> reqwest::Client {
@@ -133,13 +149,13 @@ impl ProverConfig {
 
 #[derive(Clone)]
 struct ProverState {
-    process: Arc<Process<CurrentNetwork>>,
+    process: Arc<RwLock<Process<CurrentNetwork>>>,
     config: Arc<ProverConfig>,
     limiter: Arc<Semaphore>,
 }
 
 pub fn prover_routes(
-    process: Arc<Process<CurrentNetwork>>,
+    process: Arc<RwLock<Process<CurrentNetwork>>>,
     config: Arc<ProverConfig>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     let limiter = Arc::new(Semaphore::new(config.max_concurrent_proofs().max(1)));
@@ -195,7 +211,7 @@ pub struct ProveRequest {
     #[serde(default)]
     pub broadcast: Option<bool>,
     #[serde(default)]
-    pub broadcast_network: Option<BroadcastNetwork>,
+    pub network: Option<Network>,
 }
 
 impl ProveRequest {
@@ -236,6 +252,22 @@ async fn handle_prove(
         }
     };
 
+    let client = state.config.http_client();
+    let request_network = req.network;
+    let effective_network = request_network.unwrap_or_else(|| state.config.network());
+    let api_base = effective_network.base_url();
+    if let Err(err) =
+        ensure_programs_available(&state.process, &client, api_base, &authorization).await
+    {
+        return Ok(json_reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({
+                "status": "error",
+                "message": err,
+            }),
+        ));
+    }
+
     let permit = state
         .limiter
         .clone()
@@ -245,8 +277,9 @@ async fn handle_prove(
 
     let process_for_exec = state.process.clone();
     let execution_join = tokio::task::spawn_blocking(move || {
-        let rng = &mut rand::thread_rng();
-        process_for_exec.execute::<CurrentAleo, _>(authorization, rng)
+        let mut rng = rand::thread_rng();
+        let process_guard = process_for_exec.read();
+        process_guard.execute::<CurrentAleo, _>(authorization, &mut rng)
     })
     .await;
 
@@ -288,55 +321,40 @@ async fn handle_prove(
                 "summary": summary.clone(),
             });
 
-            let network_endpoint = req
-                .broadcast_network
-                .map(|network| network.default_endpoint().to_string());
-
-            let default_broadcast = state.config.broadcast_endpoint().is_some();
-            let broadcast_requested = req
-                .broadcast
-                .unwrap_or(default_broadcast || network_endpoint.is_some());
-
-            let endpoint_candidate = network_endpoint
-                .or_else(|| state.config.broadcast_endpoint().map(|s| s.to_string()));
+            let broadcast_requested = req.broadcast.unwrap_or(true);
 
             if broadcast_requested {
-                let broadcast_meta = if let Some(endpoint) = endpoint_candidate {
-                    let client = state.config.http_client();
-                    let payload = serde_json::json!({
-                        "authorization": authorization_json.clone(),
-                        "summary": summary.clone(),
-                    });
+                let endpoint = request_network
+                    .unwrap_or(effective_network)
+                    .broadcast_endpoint();
+                let client = state.config.http_client();
+                let payload = serde_json::json!({
+                    "authorization": authorization_json.clone(),
+                    "summary": summary.clone(),
+                });
 
-                    match client.post(&endpoint).json(&payload).send().await {
-                        Ok(resp) => {
-                            let status = resp.status();
-                            let body = match resp.text().await {
-                                Ok(text) => truncate_for_log(&text, 256),
-                                Err(err) => format!("<error reading body: {err}>"),
-                            };
+                let broadcast_meta = match client.post(&endpoint).json(&payload).send().await {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let body = match resp.text().await {
+                            Ok(text) => truncate_for_log(&text, 256),
+                            Err(err) => format!("<error reading body: {err}>"),
+                        };
 
-                            serde_json::json!({
-                                "requested": true,
-                                "endpoint": endpoint,
-                                "status": status.as_u16(),
-                                "success": status.is_success(),
-                                "response": body,
-                            })
-                        }
-                        Err(err) => serde_json::json!({
+                        serde_json::json!({
                             "requested": true,
                             "endpoint": endpoint,
-                            "success": false,
-                            "error": err.to_string(),
-                        }),
+                            "status": status.as_u16(),
+                            "success": status.is_success(),
+                            "response": body,
+                        })
                     }
-                } else {
-                    serde_json::json!({
+                    Err(err) => serde_json::json!({
                         "requested": true,
+                        "endpoint": endpoint,
                         "success": false,
-                        "error": "No broadcast endpoint configured",
-                    })
+                        "error": err.to_string(),
+                    }),
                 };
 
                 if let Some(object) = response_json.as_object_mut() {
@@ -354,6 +372,141 @@ async fn handle_prove(
             Ok(json_reply(StatusCode::INTERNAL_SERVER_ERROR, error_json))
         }
     }
+}
+
+async fn ensure_programs_available(
+    process: &Arc<RwLock<Process<CurrentNetwork>>>,
+    client: &reqwest::Client,
+    base_url: &str,
+    authorization: &Authorization<CurrentNetwork>,
+) -> Result<(), String> {
+    let base = Url::parse(base_url)
+        .map_err(|err| format!("Invalid program API base '{base_url}': {err}"))?;
+
+    let mut stack: Vec<(ProgramID<CurrentNetwork>, bool)> = authorization
+        .to_vec_deque()
+        .into_iter()
+        .map(|request| (*request.program_id(), false))
+        .collect();
+    stack.extend(
+        authorization
+            .transitions()
+            .values()
+            .map(|transition| (*transition.program_id(), false)),
+    );
+
+    let credits_program_id = ProgramID::<CurrentNetwork>::from_str("credits.aleo")
+        .map_err(|err| format!("Failed to parse reference program ID: {err}"))?;
+
+    let mut scheduled = HashSet::new();
+    let mut pending: HashMap<ProgramID<CurrentNetwork>, Program<CurrentNetwork>> = HashMap::new();
+
+    while let Some((program_id, ready)) = stack.pop() {
+        if program_id == credits_program_id {
+            continue;
+        }
+
+        {
+            let guard = process.read();
+            if guard.contains_program(&program_id) {
+                if ready {
+                    pending.remove(&program_id);
+                }
+                continue;
+            }
+        }
+
+        if ready {
+            if let Some(program) = pending.remove(&program_id) {
+                let mut guard = process.write();
+                if !guard.contains_program(program.id()) {
+                    guard
+                        .add_program(&program)
+                        .map_err(|err| format!("Failed to add program '{program_id}': {err}"))?;
+                }
+            }
+            continue;
+        }
+
+        if !scheduled.insert(program_id) {
+            continue;
+        }
+
+        let program = fetch_remote_program(client, &base, &program_id).await?;
+        let imports: Vec<_> = program.imports().keys().copied().collect();
+
+        pending.insert(program_id, program);
+        stack.push((program_id, true));
+        for import_id in imports {
+            stack.push((import_id, false));
+        }
+    }
+
+    Ok(())
+}
+
+async fn fetch_remote_program(
+    client: &reqwest::Client,
+    base: &Url,
+    program_id: &ProgramID<CurrentNetwork>,
+) -> Result<Program<CurrentNetwork>, String> {
+    let url = build_program_url(base, program_id, None)?;
+
+    eprintln!(
+        "ℹ️  Fetching missing program '{}' from {}",
+        program_id,
+        url.as_str()
+    );
+
+    let response = client
+        .get(url.clone())
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch program '{program_id}': {err}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Program '{program_id}' request failed with status {}",
+            response.status()
+        ));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("Failed to read program '{program_id}': {err}"))?;
+    let trimmed = body.trim();
+    let source = if trimmed.starts_with('"') {
+        serde_json::from_str::<String>(trimmed)
+            .map_err(|err| format!("Failed to decode program '{program_id}': {err}"))?
+    } else {
+        body
+    };
+
+    Program::<CurrentNetwork>::from_str(&source)
+        .map_err(|err| format!("Failed to parse program '{program_id}': {err}"))
+}
+
+fn build_program_url(
+    base: &Url,
+    program_id: &ProgramID<CurrentNetwork>,
+    edition: Option<u16>,
+) -> Result<Url, String> {
+    let mut url = base.clone();
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| format!("Program API base '{}' must be absolute", base))?;
+        segments.pop_if_empty();
+        segments.push("program");
+        segments.push(&program_id.to_string());
+        if let Some(edition) = edition {
+            segments.push(&edition.to_string());
+        }
+    }
+
+    Ok(url)
 }
 
 fn json_reply(
