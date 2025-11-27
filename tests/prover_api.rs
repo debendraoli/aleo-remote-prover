@@ -1,12 +1,32 @@
 use std::{str::FromStr, sync::Arc};
 
-use remote_prover::{prover_routes, CurrentAleo, CurrentNetwork, ProveRequest, ProverConfig};
+use remote_prover::{
+    prover_routes, AuthorizationPayload, CurrentAleo, CurrentNetwork, ProveRequest, ProverConfig,
+};
 use serde_json::Value;
 use snarkvm::{
     prelude::{Identifier, PrivateKey, Program},
     synthesizer::Process,
 };
 use warp::http::StatusCode;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn healthcheck_root_returns_ok() {
+    let process = Arc::new(Process::<CurrentNetwork>::load().expect("failed to load process"));
+    let config = Arc::new(ProverConfig::default());
+    let routes = prover_routes(process, config);
+
+    let response = warp::test::request()
+        .method("GET")
+        .path("/")
+        .reply(&routes)
+        .await;
+
+    assert_eq!(response.status(), StatusCode::OK, "unexpected status");
+
+    let json: Value = serde_json::from_slice(response.body()).expect("invalid JSON body");
+    assert_eq!(json["status"], "ok");
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prove_simple_contract_execution() {
@@ -47,10 +67,13 @@ function add_public:
         )
         .expect("failed to authorize execution");
 
+    let authorization_value = serde_json::from_str(&authorization.to_string())
+        .expect("authorization should be valid JSON");
+
     let request_body = ProveRequest {
-        authorization: authorization.to_string(),
+        authorization: AuthorizationPayload::Json(authorization_value),
         broadcast: Some(false),
-        broadcast_endpoint: None,
+        broadcast_network: None,
     };
 
     let config = Arc::new(ProverConfig::default());

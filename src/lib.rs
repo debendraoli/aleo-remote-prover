@@ -7,6 +7,37 @@ use warp::{http::StatusCode, Filter};
 pub type CurrentNetwork = snarkvm::prelude::MainnetV0;
 pub type CurrentAleo = circuit::AleoV0;
 
+#[derive(Copy, Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BroadcastNetwork {
+    Mainnet,
+    Testnet,
+    Canary,
+}
+
+impl BroadcastNetwork {
+    pub fn default_endpoint(self) -> &'static str {
+        match self {
+            BroadcastNetwork::Mainnet => "https://api.aleo.org/v1/transactions/broadcast",
+            BroadcastNetwork::Testnet => "https://api.testnet.aleo.org/v1/transactions/broadcast",
+            BroadcastNetwork::Canary => "https://api.canary.aleo.org/v1/transactions/broadcast",
+        }
+    }
+}
+
+impl FromStr for BroadcastNetwork {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "mainnet" => Ok(BroadcastNetwork::Mainnet),
+            "testnet" => Ok(BroadcastNetwork::Testnet),
+            "canary" => Ok(BroadcastNetwork::Canary),
+            other => Err(format!("invalid broadcast network '{other}'")),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ProverConfig {
     listen_addr: SocketAddr,
@@ -64,6 +95,22 @@ impl ProverConfig {
             }
         }
 
+        if let Ok(network) = env::var("BROADCAST_NETWORK") {
+            let trimmed = network.trim();
+            if trimmed.is_empty() {
+                config.broadcast_endpoint = None;
+            } else {
+                match BroadcastNetwork::from_str(trimmed) {
+                    Ok(target) => {
+                        config.broadcast_endpoint = Some(target.default_endpoint().to_string())
+                    }
+                    Err(err) => eprintln!(
+                        "⚠️  Invalid BROADCAST_NETWORK '{network}': {err}. Keeping previous broadcast endpoint"
+                    ),
+                }
+            }
+        }
+
         config
     }
 
@@ -102,11 +149,22 @@ pub fn prover_routes(
         limiter,
     };
 
-    warp::post()
-        .and(warp::path("prove"))
+    let prove_route = warp::path("prove")
+        .and(warp::post())
         .and(warp::body::json())
-        .and(with_state(state))
-        .and_then(handle_prove)
+        .and(with_state(state.clone()))
+        .and_then(handle_prove);
+
+    let health_route = warp::path::end().and(warp::get()).map(|| {
+        json_reply(
+            StatusCode::OK,
+            serde_json::json!({
+                "status": "ok",
+            }),
+        )
+    });
+
+    health_route.or(prove_route)
 }
 
 fn with_state(
@@ -116,12 +174,34 @@ fn with_state(
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+pub enum AuthorizationPayload {
+    String(String),
+    Json(serde_json::Value),
+}
+
+impl AuthorizationPayload {
+    fn to_compact_string(&self) -> Result<String, serde_json::Error> {
+        match self {
+            AuthorizationPayload::String(value) => Ok(value.clone()),
+            AuthorizationPayload::Json(value) => serde_json::to_string(value),
+        }
+    }
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct ProveRequest {
-    pub authorization: String,
+    pub authorization: AuthorizationPayload,
     #[serde(default)]
     pub broadcast: Option<bool>,
     #[serde(default)]
-    pub broadcast_endpoint: Option<String>,
+    pub broadcast_network: Option<BroadcastNetwork>,
+}
+
+impl ProveRequest {
+    fn authorization_json(&self) -> Result<String, serde_json::Error> {
+        self.authorization.to_compact_string()
+    }
 }
 
 async fn handle_prove(
@@ -130,7 +210,20 @@ async fn handle_prove(
 ) -> Result<impl warp::Reply, warp::Rejection> {
     println!("Received proving request...");
 
-    let authorization = match Authorization::<CurrentNetwork>::from_str(&req.authorization) {
+    let authorization_json = match req.authorization_json() {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(json_reply(
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({
+                    "status": "error",
+                    "message": format!("Invalid authorization payload: {err}"),
+                }),
+            ));
+        }
+    };
+
+    let authorization = match Authorization::<CurrentNetwork>::from_str(&authorization_json) {
         Ok(auth) => auth,
         Err(e) => {
             return Ok(json_reply(
@@ -195,20 +288,23 @@ async fn handle_prove(
                 "summary": summary.clone(),
             });
 
+            let network_endpoint = req
+                .broadcast_network
+                .map(|network| network.default_endpoint().to_string());
+
             let default_broadcast = state.config.broadcast_endpoint().is_some();
             let broadcast_requested = req
                 .broadcast
-                .unwrap_or(default_broadcast || req.broadcast_endpoint.is_some());
-            let endpoint_candidate = req
-                .broadcast_endpoint
-                .clone()
+                .unwrap_or(default_broadcast || network_endpoint.is_some());
+
+            let endpoint_candidate = network_endpoint
                 .or_else(|| state.config.broadcast_endpoint().map(|s| s.to_string()));
 
             if broadcast_requested {
                 let broadcast_meta = if let Some(endpoint) = endpoint_candidate {
                     let client = state.config.http_client();
                     let payload = serde_json::json!({
-                        "authorization": req.authorization.clone(),
+                        "authorization": authorization_json.clone(),
                         "summary": summary.clone(),
                     });
 

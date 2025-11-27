@@ -28,6 +28,30 @@ CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 CUDAHOSTCXX=/usr/bin/g++-12 cargo build -
 ./target/release/remote-prover
 ```
 
+### Generating an Authorization Locally
+
+If you do not want to rely on the Leo CLI, the repository now ships with a thin
+wrapper around SnarkVM that emits an authorization string suitable for the
+`/prove` endpoint. Provide the function name, private key, and inputs using Leo
+literal syntax. The first argument can either be a local `.aleo` file or an
+on-chain program ID:
+
+```bash
+./scripts/authorize_call.sh build/main.aleo set_data_sgx APrivateKey1... \
+  "1u64" "aleo1..."
+# Fetch the latest deployed program from Provable Testnet
+AUTHORIZE_NETWORK=testnet ./scripts/authorize_call.sh veru_oracle_v2.aleo set_data_sgx \
+  APrivateKey1...
+```
+
+Under the hood this script executes `cargo run --bin authorize`, so the first
+invocation will compile the binary. You can pass `AUTHORIZE_RELEASE=1` to the
+script to use the release profile, and `PRINT_ACCOUNT=1` to print the derived
+account address to stderr for verification. When targeting on-chain programs,
+set `AUTHORIZE_NETWORK` to `mainnet`, `testnet`, or `canary` (defaults to
+`testnet`), optionally override the API base with `AUTHORIZE_API_BASE`, and
+specify a particular program edition by exporting `AUTHORIZE_EDITION`.
+
 ### Environment Variables & Configuration
 
 | Variable | Default | Description |
@@ -35,12 +59,15 @@ CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 CUDAHOSTCXX=/usr/bin/g++-12 cargo build -
 | `PROVER_LISTEN_ADDR` | `0.0.0.0:3030` | Bind address for the HTTP server. |
 | `MAX_CONCURRENT_PROOFS` | `available_parallelism()` | Maximum number of proofs executed concurrently (bounded with a semaphore). |
 | `BROADCAST_ENDPOINT` | _unset_ | Default endpoint to POST proof results. Automatically triggers broadcasting unless the request sets `"broadcast": false`. |
+| `BROADCAST_NETWORK` | _unset_ | Optional preset (`mainnet`, `testnet`, `canary`) that maps to a known broadcast endpoint when `BROADCAST_ENDPOINT` is not provided. |
 
 These variables are optional today; the binary will fall back to the defaults shown above. You can define them in a `.env` file (using `dotenvy`) or export them in your shell.
 
 ```bash
 export PROVER_LISTEN_ADDR=127.0.0.1:8080
 export BROADCAST_ENDPOINT=https://api.aleo.org/v1/transactions/broadcast
+# or rely on the preset and let the server pick the canonical URL
+export BROADCAST_NETWORK=testnet
 ```
 
 ## HTTP API
@@ -55,13 +82,13 @@ Execute the provided authorization, returning proof metadata.
 {
   "authorization": "AUTH_STRING",
   "broadcast": true,
-  "broadcast_endpoint": "https://api.aleo.org/v1/transactions/broadcast"
+  "broadcast_network": "mainnet"
 }
 ```
 
 - `authorization` – string-form serialization of an Aleo `Authorization`, typically produced by SnarkVM clients via `authorization.to_string()`.
 - `broadcast` – optional boolean. If omitted, the server broadcasts when it has a default endpoint configured. Set to `false` to explicitly skip broadcasting.
-- `broadcast_endpoint` – optional string. Overrides the default endpoint for this request and implicitly enables broadcasting.
+- `broadcast_network` – optional string (`"mainnet"`, `"testnet"`, or `"canary"`). Maps to the canonical Aleo broadcast endpoint for that network and implicitly enables broadcasting.
 
 #### Response Examples
 
@@ -125,7 +152,7 @@ curl -X POST \
 ### 2. Proof Submission with Broadcast
 
 ```bash
-export BROADCAST_ENDPOINT=https://api.aleo.org/v1/transactions/broadcast
+export BROADCAST_NETWORK=mainnet
 ./target/release/remote-prover &
 
 AUTH=$(./authorize_call.sh)
@@ -136,15 +163,15 @@ curl -X POST \
 # The prover will forward the proof + authorization to the broadcast endpoint on success.
 ```
 
-### 3. Override the Broadcast Endpoint Per Request
+### 3. Select the Broadcast Network Per Request
 
 ```bash
 AUTH=$(./authorize_call.sh)
 curl -X POST \
   -H "Content-Type: application/json" \
-  -d "{\"authorization\": \"${AUTH}\", \"broadcast_endpoint\": \"https://testnet.aleo.org/v1/tx\"}" \
+  -d "{\"authorization\": \"${AUTH}\", \"broadcast_network\": \"testnet\"}" \
   http://localhost:3030/prove
-# Uses the provided endpoint even if the server has a different default.
+# Uses the canonical endpoint for the selected network even if the server has a different default.
 ```
 
 ### 4. GPU-Accelerated Run (CUDA)

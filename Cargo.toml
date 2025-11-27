@@ -19,7 +19,11 @@ serde_json = "1.0"
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
+    "blocking",
 ] }
+
+# CLI helpers for authorization script
+clap = { version = "4.5", features = ["derive"] }
 
 # .env support (optional)
 dotenvy = "0.15"
