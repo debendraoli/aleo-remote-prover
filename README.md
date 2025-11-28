@@ -7,22 +7,16 @@ A lightweight Warp-based HTTP service that accepts Aleo `Authorization` payloads
 - ⚡ Async Warp server with graceful task offloading for heavy proving work.
 - 🔐 Works with Mainnet V0 parameters out of the box.
 - 🧪 Integration-tested endpoint covering a full contract execution flow.
-- ⚙️ Optional CUDA acceleration: build with `cargo build --features cuda` on GPU machines.
 
 ## Prerequisites
 
 - Rust 1.76+
 - Aleo binaries / SDK (optional, for broadcasting)
-- CUDA Toolkit + compatible GPU (optional, for `--features cuda`)
 
 ## Building & Running
 
 ```bash
-# CPU build
 cargo build --release
-
-# Enable GPU proving (requires x86_64 + NVIDIA CUDA stack)
-CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 CUDAHOSTCXX=/usr/bin/g++-12 cargo build --release --features cuda
 
 # Run the server (defaults to 0.0.0.0:3030)
 ./target/release/remote-prover
@@ -58,7 +52,7 @@ specify a particular program edition by exporting `AUTHORIZE_EDITION`.
 |----------|---------|-------------|
 | `PROVER_LISTEN_ADDR` | `0.0.0.0:3030` | Bind address for the HTTP server. |
 | `MAX_CONCURRENT_PROOFS` | `available_parallelism()` | Maximum number of proofs executed concurrently (bounded with a semaphore). |
-| `NETWORK` | `mainnet` | Selects the Provable Explorer network used for automatic program fetching and default broadcasting (`mainnet`, `testnet`, `canary`). |
+| `NETWORK` | `testnet` | Selects the Provable Explorer network used for automatic program fetching and default broadcasting (`mainnet`, `testnet`, `canary`). |
 
 These variables are optional today; the binary will fall back to the defaults shown above. You can define them in a `.env` file (using `dotenvy`) or export them in your shell.
 
@@ -182,18 +176,6 @@ curl -X POST \
 # Explicitly opts out of broadcasting while still producing the proof summary.
 ```
 
-### 5. GPU-Accelerated Run (CUDA)
-
-```bash
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-CC=/usr/bin/gcc-12 CXX=/usr/bin/g++-12 CUDAHOSTCXX=/usr/bin/g++-12 cargo run --release --features cuda
-# Submit jobs as usual via curl
-```
-
-> **Heads up:** CUDA support in SnarkVM is currently limited to x86_64 targets with NVIDIA GPUs and the CUDA toolkit installed. Builds will now fail early if you enable `--features cuda` on unsupported architectures (for example Apple Silicon Macs which I'm running on).
->
-> Additionally, CUDA 12 currently requires GCC 11/12 as its host compiler. Set `CC`, `CXX`, and `CUDAHOSTCXX` to the GCC 12 toolchain (see commands above) before compiling with `--features cuda` on Linux GPU hosts such as AWS g4dn instances.
-
 ## Broadcasting Transactions Manually
 
 If you prefer to broadcast yourself, combine the response data with SnarkVM to build a full `Transaction` object (using the trace and response returned by the prover), then submit via Aleo’s REST interface:
@@ -211,7 +193,6 @@ curl -X POST \
 
 ```bash
 cargo test                    # Includes integration test for /prove
-cargo test --features cuda    # GPU path smoke test
 ```
 
 The integration test `tests/prover_api.rs` demonstrates programmatic authorization generation and HTTP submission end-to-end.
