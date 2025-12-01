@@ -53,6 +53,8 @@ specify a particular program edition by exporting `AUTHORIZE_EDITION`.
 | `PROVER_LISTEN_ADDR` | `0.0.0.0:3030` | Bind address for the HTTP server. |
 | `MAX_CONCURRENT_PROOFS` | `available_parallelism()` | Maximum number of proofs executed concurrently (bounded with a semaphore). |
 | `NETWORK` | `testnet` | Selects the Provable Explorer network used for automatic program fetching and default broadcasting (`mainnet`, `testnet`, `canary`). |
+| `ENFORCE_PROGRAM_EDITIONS` | `true` | Validates that imported programs are on a non-stale edition once the network has upgraded (mirrors snarkVM's `check_valid_edition`). Disable only for unit tests or local experimentation. |
+| `REST_ENDPOINT_OVERRIDE` | *(unset)* | Overrides the REST endpoint used for state queries (expects either a full URI or a static JSON payload shaped like `{"state_root":"…","height":0}`). Useful for tests and air-gapped deployments. |
 
 These variables are optional today; the binary will fall back to the defaults shown above. You can define them in a `.env` file (using `dotenvy`) or export them in your shell.
 
@@ -72,12 +74,14 @@ Execute the provided authorization, returning proof metadata.
 ```json
 {
   "authorization": "AUTH_STRING",
+  "fee_authorization": "FEE_AUTH_STRING",
   "broadcast": true,
   "network": "mainnet"
 }
 ```
 
 - `authorization` – string-form serialization of an Aleo `Authorization`, typically produced by SnarkVM clients via `authorization.to_string()`.
+- `fee_authorization` – optional string or JSON-encoded authorization that produces the fee transition for the transaction. Provide this when the main execution does not already include a fee transition (common for application calls that rely on a wallet's credits).
 - `broadcast` – optional boolean. If omitted, the server broadcasts when it has a default endpoint configured. Set to `false` to explicitly skip broadcasting.
 - `network` – optional string (`"mainnet"`, `"testnet"`, or `"canary"`). Overrides the server's configured network for fetching programs and selecting the broadcast endpoint.
 
@@ -104,7 +108,18 @@ Execute the provided authorization, returning proof metadata.
     "status": 200,
     "success": true,
     "response": "{\"tx_id\":\"...\"}"
-  }
+  },
+  "fee": {
+    "kind": "private",
+    "transition_id": "...",
+    "amount_microcredits": "1200000",
+    "base_microcredits": "1000000",
+    "priority_microcredits": "200000",
+    "payer": "aleo1...",
+    "global_state_root": "...",
+    "num_finalize_operations": 0
+  },
+  "transaction_payload": "{\"type\":\"execute\",...}"
 }
 ```
 
@@ -126,7 +141,7 @@ Execute the provided authorization, returning proof metadata.
 }
 ```
 
-By default the service POSTs a JSON payload containing the proof summary plus the original authorization to the canonical Provable Explorer endpoint for the configured `NETWORK` unless the request opts out (`"broadcast": false`). Non-2xx responses are logged but do not break the HTTP request.
+By default the service POSTs a JSON payload containing the serialized transaction (`transaction_payload`) to the canonical Provable Explorer endpoint for the configured `NETWORK` unless the request opts out (`"broadcast": false`). Non-2xx responses are logged but do not break the HTTP request.
 
 ## cURL Examples
 
@@ -178,16 +193,18 @@ curl -X POST \
 
 ## Broadcasting Transactions Manually
 
-If you prefer to broadcast yourself, combine the response data with SnarkVM to build a full `Transaction` object (using the trace and response returned by the prover), then submit via Aleo’s REST interface:
+If you prefer to broadcast yourself, you can take the `transaction_payload` string returned by `/prove` and submit it directly to Aleo’s REST interface:
 
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
-    "transaction": "{\"id\":\"...\",\"proof\":...}"
+    "transaction": "{\"type\":\"execute\",\"id\":\"...\",...}"
   }' \
   https://api.explorer.provable.com/v2/testnet/transaction/broadcast
 ```
+
+When you omit `fee_authorization`, the prover expects that the supplied `authorization` already contains a fee transition. If the execution requires a separate fee payer, generate a second authorization that spends the payer's credits and attach it via `fee_authorization`; the prover will execute both, merge them into a single transaction, and include fee metadata in the response for easier bookkeeping.
 
 ## Testing
 

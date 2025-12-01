@@ -11,12 +11,26 @@ use snarkvm::{
 };
 use warp::http::StatusCode;
 
+const STATIC_STATE_ROOT: &str = "sr1sptckjss92jgnu47n78twwyg6hchksz3chqfxcc3mjgaagyvlyxqh774x3";
+
+fn static_query_payload() -> String {
+    serde_json::json!({
+        "state_root": STATIC_STATE_ROOT,
+        "height": 0,
+    })
+    .to_string()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn healthcheck_root_returns_ok() {
     let process = Arc::new(RwLock::new(
         Process::<CurrentNetwork>::load().expect("failed to load process"),
     ));
-    let config = Arc::new(ProverConfig::default());
+    let config = Arc::new(
+        ProverConfig::default()
+            .with_enforce_program_editions(false)
+            .with_rest_endpoint_override(static_query_payload()),
+    );
     let routes = prover_routes(process, config);
 
     let response = warp::test::request()
@@ -70,7 +84,6 @@ function add_public:
         .expect("failed to authorize execution");
 
     let process = Arc::new(RwLock::new(process_instance));
-
     let authorization_value = serde_json::from_str(&authorization.to_string())
         .expect("authorization should be valid JSON");
 
@@ -78,9 +91,14 @@ function add_public:
         authorization: AuthorizationPayload::Json(authorization_value),
         broadcast: Some(false),
         network: None,
+        fee_authorization: None,
     };
 
-    let config = Arc::new(ProverConfig::default());
+    let config = Arc::new(
+        ProverConfig::default()
+            .with_enforce_program_editions(false)
+            .with_rest_endpoint_override(static_query_payload()),
+    );
     let routes = prover_routes(process, config);
 
     let response = warp::test::request()
@@ -94,5 +112,29 @@ function add_public:
 
     let json: Value = serde_json::from_slice(response.body()).expect("invalid JSON body");
     assert_eq!(json["status"], "success");
-    assert_eq!(json["summary"]["transitions"], 1);
+    assert_eq!(json["network"], "testnet");
+    assert_eq!(json["transaction_type"], "execute");
+    assert!(
+        json["transaction"].is_object(),
+        "transaction should be a JSON object"
+    );
+
+    let summary = json
+        .get("summary")
+        .and_then(|value| value.as_object())
+        .expect("missing summary section");
+    assert_eq!(summary.get("transitions").and_then(|v| v.as_u64()), Some(1));
+
+    let broadcast = json
+        .get("broadcast")
+        .and_then(|value| value.as_object())
+        .expect("missing broadcast metadata");
+    assert_eq!(
+        broadcast.get("requested").and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert!(
+        json.get("fee").is_none(),
+        "fee section should be absent for fee-less requests"
+    );
 }
