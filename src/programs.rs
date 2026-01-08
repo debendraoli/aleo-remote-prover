@@ -5,6 +5,11 @@ use snarkvm::prelude::*;
 use snarkvm::synthesizer::Process;
 use std::{collections::HashSet, str::FromStr, sync::Arc};
 
+struct ProgramWithEdition {
+    program: Program<CurrentNetwork>,
+    edition: u16,
+}
+
 pub async fn fetch_latest_edition(
     client: &reqwest::Client,
     base: &Url,
@@ -85,7 +90,7 @@ pub async fn ensure_programs_available(
         .map_err(|err| format!("Failed to parse reference program ID: {err}"))?;
 
     let mut scheduled = HashSet::new();
-    let mut pending: Vec<Program<CurrentNetwork>> = Vec::new();
+    let mut pending: Vec<ProgramWithEdition> = Vec::new();
 
     while let Some((program_id, ready)) = stack.pop() {
         if program_id == credits_program_id {
@@ -100,14 +105,17 @@ pub async fn ensure_programs_available(
         }
 
         if ready {
-            // Find and add the pending program
-            if let Some(idx) = pending.iter().position(|p| *p.id() == program_id) {
-                let program = pending.swap_remove(idx);
+            if let Some(idx) = pending.iter().position(|p| *p.program.id() == program_id) {
+                let ProgramWithEdition { program, edition } = pending.swap_remove(idx);
                 let mut guard = process.write();
                 if !guard.contains_program(program.id()) {
                     guard
-                        .add_program(&program)
-                        .map_err(|err| format!("Failed to add program '{program_id}': {err}"))?;
+                        .add_program_with_edition(&program, edition)
+                        .map_err(|err| {
+                            format!(
+                                "Failed to add program '{program_id}' (edition {edition}): {err}"
+                            )
+                        })?;
                 }
             }
             continue;
@@ -117,10 +125,11 @@ pub async fn ensure_programs_available(
             continue;
         }
 
-        let program = fetch_remote_program(client, &base, &program_id).await?;
+        let (program, edition) =
+            fetch_remote_program_with_edition(client, &base, &program_id).await?;
         let imports: Vec<_> = program.imports().keys().copied().collect();
 
-        pending.push(program);
+        pending.push(ProgramWithEdition { program, edition });
         stack.push((program_id, true));
         for import_id in imports {
             stack.push((import_id, false));
@@ -130,23 +139,22 @@ pub async fn ensure_programs_available(
     Ok(())
 }
 
-pub async fn fetch_remote_program(
+pub async fn fetch_remote_program_with_edition(
     client: &reqwest::Client,
     base: &Url,
     program_id: &ProgramID<CurrentNetwork>,
-) -> Result<Program<CurrentNetwork>, String> {
+) -> Result<(Program<CurrentNetwork>, u16), String> {
     // First, fetch the latest edition for this program
-    let edition = fetch_latest_edition(client, base, program_id).await?;
+    let edition = fetch_latest_edition(client, base, program_id)
+        .await?
+        .unwrap_or(0);
 
-    let url = build_program_url(base, program_id, edition)?;
+    let url = build_program_url(base, program_id, Some(edition))?;
 
-    let edition_info = edition
-        .map(|e| format!(" (edition {e})"))
-        .unwrap_or_default();
     eprintln!(
-        "ℹ️  Fetching program '{}'{} from {}",
+        "ℹ️  Fetching program '{}' (edition {}) from {}",
         program_id,
-        edition_info,
+        edition,
         url.as_str()
     );
 
@@ -176,8 +184,10 @@ pub async fn fetch_remote_program(
         body
     };
 
-    Program::<CurrentNetwork>::from_str(&source)
-        .map_err(|err| format!("Failed to parse program '{program_id}': {err}"))
+    let program = Program::<CurrentNetwork>::from_str(&source)
+        .map_err(|err| format!("Failed to parse program '{program_id}': {err}"))?;
+
+    Ok((program, edition))
 }
 
 fn build_program_url(
