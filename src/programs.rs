@@ -1,13 +1,64 @@
-use crate::{config::Network, CurrentNetwork};
+use crate::CurrentNetwork;
 use parking_lot::RwLock;
 use reqwest::Url;
 use snarkvm::prelude::*;
 use snarkvm::synthesizer::Process;
-use std::{
-    collections::{HashMap, HashSet},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{collections::HashSet, str::FromStr, sync::Arc};
+
+pub async fn fetch_latest_edition(
+    client: &reqwest::Client,
+    base: &Url,
+    program_id: &ProgramID<CurrentNetwork>,
+) -> Result<Option<u16>, String> {
+    let url = build_latest_edition_url(base, program_id)?;
+
+    let response = client
+        .get(url.clone())
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|err| format!("Failed to fetch latest edition for '{program_id}': {err}"))?;
+
+    if !response.status().is_success() {
+        // If the endpoint returns 404, the program may not have editions
+        if response.status().as_u16() == 404 {
+            return Ok(None);
+        }
+        return Err(format!(
+            "Latest edition request for '{program_id}' failed with status {}",
+            response.status()
+        ));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("Failed to read latest edition for '{program_id}': {err}"))?;
+
+    let edition: u16 = body
+        .trim()
+        .parse()
+        .map_err(|err| format!("Failed to parse edition number for '{program_id}': {err}"))?;
+
+    Ok(Some(edition))
+}
+
+fn build_latest_edition_url(
+    base: &Url,
+    program_id: &ProgramID<CurrentNetwork>,
+) -> Result<Url, String> {
+    let mut url = base.clone();
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| format!("Program API base '{}' must be absolute", base))?;
+        segments.pop_if_empty();
+        segments.push("program");
+        segments.push(&program_id.to_string());
+        segments.push("latest_edition");
+    }
+    Ok(url)
+}
 
 pub async fn ensure_programs_available(
     process: &Arc<RwLock<Process<CurrentNetwork>>>,
@@ -34,7 +85,7 @@ pub async fn ensure_programs_available(
         .map_err(|err| format!("Failed to parse reference program ID: {err}"))?;
 
     let mut scheduled = HashSet::new();
-    let mut pending: HashMap<ProgramID<CurrentNetwork>, Program<CurrentNetwork>> = HashMap::new();
+    let mut pending: Vec<Program<CurrentNetwork>> = Vec::new();
 
     while let Some((program_id, ready)) = stack.pop() {
         if program_id == credits_program_id {
@@ -44,15 +95,14 @@ pub async fn ensure_programs_available(
         {
             let guard = process.read();
             if guard.contains_program(&program_id) {
-                if ready {
-                    pending.remove(&program_id);
-                }
                 continue;
             }
         }
 
         if ready {
-            if let Some(program) = pending.remove(&program_id) {
+            // Find and add the pending program
+            if let Some(idx) = pending.iter().position(|p| *p.id() == program_id) {
+                let program = pending.swap_remove(idx);
                 let mut guard = process.write();
                 if !guard.contains_program(program.id()) {
                     guard
@@ -70,7 +120,7 @@ pub async fn ensure_programs_available(
         let program = fetch_remote_program(client, &base, &program_id).await?;
         let imports: Vec<_> = program.imports().keys().copied().collect();
 
-        pending.insert(program_id, program);
+        pending.push(program);
         stack.push((program_id, true));
         for import_id in imports {
             stack.push((import_id, false));
@@ -85,11 +135,18 @@ pub async fn fetch_remote_program(
     base: &Url,
     program_id: &ProgramID<CurrentNetwork>,
 ) -> Result<Program<CurrentNetwork>, String> {
-    let url = build_program_url(base, program_id, None)?;
+    // First, fetch the latest edition for this program
+    let edition = fetch_latest_edition(client, base, program_id).await?;
 
+    let url = build_program_url(base, program_id, edition)?;
+
+    let edition_info = edition
+        .map(|e| format!(" (edition {e})"))
+        .unwrap_or_default();
     eprintln!(
-        "ℹ️  Fetching missing program '{}' from {}",
+        "ℹ️  Fetching program '{}'{} from {}",
         program_id,
+        edition_info,
         url.as_str()
     );
 
@@ -142,15 +199,4 @@ fn build_program_url(
     }
 
     Ok(url)
-}
-
-#[allow(dead_code)]
-pub fn build_network_program_url(
-    network: Network,
-    program_id: &ProgramID<CurrentNetwork>,
-    edition: Option<u16>,
-) -> Result<Url, String> {
-    let base = Url::parse(&network.rest_base_url())
-        .map_err(|err| format!("Invalid REST base for network: {err}"))?;
-    build_program_url(&base, program_id, edition)
 }

@@ -29,8 +29,6 @@ impl Network {
     }
 
     pub fn rest_base_url(self) -> String {
-        // All explorer environments currently share the same REST root. If that changes in the
-        // future, adjust this match alongside `base_url`.
         match self {
             Network::Mainnet | Network::Testnet | Network::Canary => {
                 "https://api.explorer.provable.com".to_string()
@@ -160,8 +158,8 @@ impl ProverConfig {
         self.network.base_url()
     }
 
-    pub fn http_client(&self) -> Client {
-        self.http_client.clone()
+    pub fn http_client(&self) -> &Client {
+        &self.http_client
     }
 
     pub fn enforce_program_editions(&self) -> bool {
@@ -183,7 +181,8 @@ impl ProverConfig {
 
     pub fn rest_endpoint_for(&self, network: Network) -> String {
         self.rest_endpoint_override
-            .clone()
+            .as_ref()
+            .cloned()
             .unwrap_or_else(|| network.rest_base_url())
     }
 

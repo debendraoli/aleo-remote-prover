@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Create dedicated system user/group if missing
+if ! id -u remote-prover >/dev/null 2>&1; then
+  adduser --system --group --no-create-home --home /nonexistent remote-prover >/dev/null
+fi
+
+# Create working directory
+install -d -o remote-prover -g remote-prover -m 0755 /var/lib/remote-prover
+
+# Reload systemd units
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+exit 0

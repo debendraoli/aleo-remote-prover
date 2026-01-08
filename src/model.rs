@@ -1,4 +1,3 @@
-/// Authorization payload accepted by the API.
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(untagged)]
 pub enum AuthorizationPayload {

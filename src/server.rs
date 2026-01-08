@@ -61,29 +61,13 @@ async fn handle_prove(
 
     let authorization = match parse_authorization_payload("authorization", &req.authorization) {
         Ok(auth) => auth,
-        Err(err) => {
-            return Ok(json_reply(
-                StatusCode::BAD_REQUEST,
-                serde_json::json!({
-                    "status": "error",
-                    "message": err,
-                }),
-            ));
-        }
+        Err(err) => return Ok(bad_request(err)),
     };
 
     let fee_authorization = match req.fee_authorization.as_ref() {
         Some(payload) => match parse_authorization_payload("fee_authorization", payload) {
             Ok(auth) => Some(auth),
-            Err(err) => {
-                return Ok(json_reply(
-                    StatusCode::BAD_REQUEST,
-                    serde_json::json!({
-                        "status": "error",
-                        "message": err,
-                    }),
-                ));
-            }
+            Err(err) => return Ok(bad_request(err)),
         },
         None => None,
     };
@@ -94,28 +78,16 @@ async fn handle_prove(
     let api_base = effective_network.base_url();
 
     if let Err(err) =
-        ensure_programs_available(&state.process, &client, api_base, &authorization).await
+        ensure_programs_available(&state.process, client, api_base, &authorization).await
     {
-        return Ok(json_reply(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::json!({
-                "status": "error",
-                "message": err,
-            }),
-        ));
+        return Ok(error_reply(err));
     }
 
     if let Some(fee_auth) = &fee_authorization {
         if let Err(err) =
-            ensure_programs_available(&state.process, &client, api_base, fee_auth).await
+            ensure_programs_available(&state.process, client, api_base, fee_auth).await
         {
-            return Ok(json_reply(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({
-                    "status": "error",
-                    "message": err,
-                }),
-            ));
+            return Ok(error_reply(err));
         }
     }
 
@@ -146,23 +118,9 @@ async fn handle_prove(
 
     let artifacts = match proving_join {
         Ok(Ok(artifacts)) => artifacts,
-        Ok(Err(err)) => {
-            return Ok(json_reply(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({
-                    "status": "error",
-                    "message": err,
-                }),
-            ));
-        }
+        Ok(Err(err)) => return Ok(error_reply(err)),
         Err(join_error) => {
-            return Ok(json_reply(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({
-                    "status": "error",
-                    "message": format!("Worker panicked while proving: {join_error}"),
-                }),
-            ));
+            return Ok(error_reply(format!("Worker panicked while proving: {join_error}")));
         }
     };
 
@@ -175,29 +133,17 @@ async fn handle_prove(
         "execute"
     };
 
-    let transaction_value = match serde_json::to_value(&artifacts.transaction) {
-        Ok(value) => value,
-        Err(err) => {
-            return Ok(json_reply(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({
-                    "status": "error",
-                    "message": format!("Failed to serialize transaction: {err}"),
-                }),
-            ));
-        }
-    };
-
     let transaction_string = match serde_json::to_string(&artifacts.transaction) {
         Ok(value) => value,
         Err(err) => {
-            return Ok(json_reply(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                serde_json::json!({
-                    "status": "error",
-                    "message": format!("Failed to serialize transaction: {err}"),
-                }),
-            ));
+            return Ok(error_reply(format!("Failed to serialize transaction: {err}")));
+        }
+    };
+
+    let transaction_value: serde_json::Value = match serde_json::from_str(&transaction_string) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(error_reply(format!("Failed to parse transaction JSON: {err}")));
         }
     };
     let transaction_preview = truncate_for_log(&transaction_string, 256);
@@ -291,8 +237,21 @@ fn json_reply(
     status: StatusCode,
     body: serde_json::Value,
 ) -> warp::reply::WithStatus<warp::reply::Json> {
-    let reply = warp::reply::json(&body);
-    warp::reply::with_status(reply, status)
+    warp::reply::with_status(warp::reply::json(&body), status)
+}
+
+fn error_reply(message: impl Into<String>) -> warp::reply::WithStatus<warp::reply::Json> {
+    json_reply(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        serde_json::json!({ "status": "error", "message": message.into() }),
+    )
+}
+
+fn bad_request(message: impl Into<String>) -> warp::reply::WithStatus<warp::reply::Json> {
+    json_reply(
+        StatusCode::BAD_REQUEST,
+        serde_json::json!({ "status": "error", "message": message.into() }),
+    )
 }
 
 fn truncate_for_log(input: &str, max_len: usize) -> String {

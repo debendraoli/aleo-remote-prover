@@ -12,8 +12,7 @@ on:
         default: "v1.0.0"
 
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 jobs:
   build:
@@ -30,7 +29,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
+          sudo apt-get install -y pkg-config libssl-dev fakeroot dpkg-dev
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -39,6 +38,11 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build Debian package
+        run: |
+          VERSION="${{ github.event.inputs.release_version || github.ref_name }}"
+          ./scripts/build_deb.sh "$VERSION" "${{ matrix.target }}" amd64 artifacts
 
       - name: Package artifacts
         run: |
@@ -63,6 +67,8 @@ jobs:
           path: |
             artifacts/remote-prover-${{ matrix.target }}.tar.gz
             artifacts/remote-prover-${{ matrix.target }}.tar.gz.sha256
+            artifacts/*.deb
+            artifacts/*.deb.sha256
 
   release:
     name: Publish Release

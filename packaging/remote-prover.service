@@ -1,0 +1,24 @@
+[Unit]
+Description=Remote Aleo Prover
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remote-prover
+Group=remote-prover
+EnvironmentFile=-/etc/default/remote-prover
+WorkingDirectory=/var/lib/remote-prover
+ExecStart=/usr/bin/remote-prover
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/remote-prover
+
+[Install]
+WantedBy=multi-user.target

@@ -1,11 +1,12 @@
 use clap::{ArgGroup, Parser, ValueEnum};
-use remote_prover::{CurrentAleo, CurrentNetwork};
+use remote_prover::{CurrentAleo, CurrentNetwork, Network};
 use reqwest::blocking::Client;
 use reqwest::Url;
 use snarkvm::prelude::{Address, Identifier, PrivateKey, Program, ProgramID, ViewKey};
 use snarkvm::synthesizer::Process;
 use std::{collections::HashSet, fs, io, path::PathBuf, str::FromStr, time::Duration};
 
+/// CLI-compatible network selection (maps to crate::Network)
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum NetworkTarget {
     Mainnet,
@@ -13,18 +14,20 @@ enum NetworkTarget {
     Canary,
 }
 
-impl NetworkTarget {
-    fn base_url(self) -> &'static str {
-        match self {
-            NetworkTarget::Mainnet => "https://api.explorer.provable.com/v2/mainnet",
-            NetworkTarget::Testnet => "https://api.explorer.provable.com/v2/testnet",
-            NetworkTarget::Canary => "https://api.explorer.provable.com/v2/canary",
+impl From<NetworkTarget> for Network {
+    fn from(target: NetworkTarget) -> Self {
+        match target {
+            NetworkTarget::Mainnet => Network::Mainnet,
+            NetworkTarget::Testnet => Network::Testnet,
+            NetworkTarget::Canary => Network::Canary,
         }
     }
 }
 
-struct LoadedProgram {
-    program: Program<CurrentNetwork>,
+impl NetworkTarget {
+    fn base_url(self) -> &'static str {
+        Network::from(self).base_url()
+    }
 }
 
 struct RemoteFetcher {
@@ -48,11 +51,59 @@ impl RemoteFetcher {
         })
     }
 
+    /// Fetches the latest edition number for a program.
+    /// Returns `None` if the endpoint is unavailable or the program has no editions.
+    fn fetch_latest_edition(
+        &self,
+        program_id: &str,
+    ) -> Result<Option<u16>, Box<dyn std::error::Error>> {
+        let mut url = self.base_url.clone();
+        {
+            let mut segments = url
+                .path_segments_mut()
+                .map_err(|_| boxed_err("API base URL must be absolute"))?;
+            segments.pop_if_empty();
+            segments.push("program");
+            segments.push(program_id);
+            segments.push("latest_edition");
+        }
+
+        let response = self
+            .client
+            .get(url.clone())
+            .header("Accept", "application/json")
+            .send()
+            .map_err(|e| with_context(format!("failed to fetch latest edition for '{program_id}'"), e))?;
+
+        if !response.status().is_success() {
+            // If 404, the program may not have editions yet
+            if response.status().as_u16() == 404 {
+                return Ok(None);
+            }
+            return Err(boxed_err(format!(
+                "latest edition request for '{}' failed with status {}",
+                program_id,
+                response.status()
+            )));
+        }
+
+        let body = response
+            .text()
+            .map_err(|e| with_context("failed to read latest edition response", e))?;
+
+        let edition: u16 = body
+            .trim()
+            .parse()
+            .map_err(|e| with_context(format!("failed to parse edition number for '{program_id}'"), e))?;
+
+        Ok(Some(edition))
+    }
+
     fn fetch_program(
         &self,
         program_id: &str,
         edition: Option<u16>,
-    ) -> Result<LoadedProgram, Box<dyn std::error::Error>> {
+    ) -> Result<Program<CurrentNetwork>, Box<dyn std::error::Error>> {
         let mut url = self.base_url.clone();
         {
             let mut segments = url
@@ -94,10 +145,8 @@ impl RemoteFetcher {
             body
         };
 
-        let program = Program::<CurrentNetwork>::from_str(&source)
-            .map_err(|e| with_context(format!("failed to parse program '{program_id}'"), e))?;
-
-        Ok(LoadedProgram { program })
+        Program::<CurrentNetwork>::from_str(&source)
+            .map_err(|e| with_context(format!("failed to parse program '{program_id}'"), e))
     }
 }
 
@@ -163,8 +212,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    let (loaded_program, remote_fetcher) = load_program(&args)?;
-    let program = &loaded_program.program;
+    let (program, remote_fetcher) = load_program(&args)?;
 
     let function_id = Identifier::<CurrentNetwork>::from_str(&args.function)
         .map_err(|e| with_context(format!("failed to parse function '{}'", args.function), e))?;
@@ -175,11 +223,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(fetcher) = remote_fetcher.as_ref() {
         let mut visited = HashSet::new();
         visited.insert(program.id().to_string());
-        load_remote_dependencies(&mut process, fetcher, &loaded_program, &mut visited)?;
+        load_remote_dependencies(&mut process, fetcher, &program, &mut visited)?;
     }
 
     process
-        .add_program(program)
+        .add_program(&program)
         .map_err(|e| with_context("failed to add program to process", e))?;
 
     let private_key = PrivateKey::<CurrentNetwork>::from_str(&args.private_key)
@@ -196,7 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .map_err(|e| with_context("failed to authorize execution", e))?;
 
-    println!("{}", authorization.to_string());
+    println!("{authorization}");
 
     if args.print_account {
         let view_key = ViewKey::<CurrentNetwork>::try_from(&private_key)
@@ -211,10 +259,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn load_program(
     args: &Args,
-) -> Result<(LoadedProgram, Option<RemoteFetcher>), Box<dyn std::error::Error>> {
+) -> Result<(Program<CurrentNetwork>, Option<RemoteFetcher>), Box<dyn std::error::Error>> {
     if let Some(path) = &args.program_file {
-        let program = load_local_program(path)?;
-        return Ok((program, None));
+        return Ok((load_local_program(path)?, None));
     }
 
     let program_id = args
@@ -236,37 +283,44 @@ fn load_program(
         .unwrap_or_else(|| args.network.base_url());
 
     let fetcher = RemoteFetcher::new(base_url)?;
-    let program = fetcher.fetch_program(program_id, args.edition)?;
+
+    // Use explicit edition if provided, otherwise fetch the latest edition
+    let edition = match args.edition {
+        Some(e) => Some(e),
+        None => fetcher.fetch_latest_edition(program_id)?,
+    };
+
+    let program = fetcher.fetch_program(program_id, edition)?;
     Ok((program, Some(fetcher)))
 }
 
-fn load_local_program(path: &PathBuf) -> Result<LoadedProgram, Box<dyn std::error::Error>> {
+fn load_local_program(path: &PathBuf) -> Result<Program<CurrentNetwork>, Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)
         .map_err(|e| with_context(format!("failed to read program {}", path.display()), e))?;
 
-    let program = Program::<CurrentNetwork>::from_str(&source)
-        .map_err(|e| with_context("failed to parse program", e))?;
-
-    Ok(LoadedProgram { program })
+    Program::<CurrentNetwork>::from_str(&source)
+        .map_err(|e| with_context("failed to parse program", e))
 }
 
 fn load_remote_dependencies(
     process: &mut Process<CurrentNetwork>,
     fetcher: &RemoteFetcher,
-    parent: &LoadedProgram,
+    parent: &Program<CurrentNetwork>,
     visited: &mut HashSet<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (import_id, _) in parent.program.imports() {
-        let import_id = import_id.to_string();
-        if !visited.insert(import_id.clone()) {
+    for (import_id, _) in parent.imports() {
+        let import_str = import_id.to_string();
+        if !visited.insert(import_str.clone()) {
             continue;
         }
 
-        let dependency = fetcher.fetch_program(&import_id, None)?;
+        // Fetch the latest edition for the dependency
+        let edition = fetcher.fetch_latest_edition(&import_str)?;
+        let dependency = fetcher.fetch_program(&import_str, edition)?;
         load_remote_dependencies(process, fetcher, &dependency, visited)?;
-        process.add_program(&dependency.program).map_err(|e| {
+        process.add_program(&dependency).map_err(|e| {
             with_context(
-                format!("failed to add dependency '{import_id}' to process"),
+                format!("failed to add dependency '{import_str}' to process"),
                 e,
             )
         })?;
@@ -276,7 +330,7 @@ fn load_remote_dependencies(
 }
 
 fn boxed_err(message: impl Into<String>) -> Box<dyn std::error::Error> {
-    Box::new(io::Error::new(io::ErrorKind::Other, message.into()))
+    Box::new(io::Error::other(message.into()))
 }
 
 fn with_context<E: std::fmt::Display>(
