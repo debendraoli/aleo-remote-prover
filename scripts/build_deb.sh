@@ -8,14 +8,15 @@ set -euo pipefail
 # - maintainer scripts (postinst/prerm)
 #
 # Usage:
-#   ./scripts/build_deb.sh <version> [target_triple] [arch] [out_dir]
+#   ./scripts/build_deb.sh <version> [target_triple] [arch] [out_dir] [network]
 # Example:
-#   ./scripts/build_deb.sh 0.1.0 x86_64-unknown-linux-gnu amd64 artifacts
+#   ./scripts/build_deb.sh 0.1.0 x86_64-unknown-linux-gnu amd64 artifacts testnet
 
 VERSION_RAW=${1:?"version required (e.g. 0.1.0 or v0.1.0)"}
 TARGET_TRIPLE=${2:-x86_64-unknown-linux-gnu}
 ARCH=${3:-amd64}
 OUT_DIR=${4:-artifacts}
+NETWORK=${5:-mainnet}
 
 VERSION=${VERSION_RAW#v}
 
@@ -57,15 +58,16 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: debendraoli <noreply@github.com>
 Depends: libc6 (>= 2.31), ca-certificates, adduser, systemd
-Description: Remote Aleo Prover
+Description: Remote Aleo Prover (${NETWORK})
  A lightweight HTTP service that executes Aleo authorizations using SnarkVM.
+ Built for ${NETWORK} network.
 EOF
 
 install -m 0755 packaging/debian/postinst "$PKG_DIR/DEBIAN/postinst"
 install -m 0755 packaging/debian/prerm "$PKG_DIR/DEBIAN/prerm"
 
 mkdir -p "$OUT_DIR"
-DEB_NAME="remote-prover_${VERSION}_${ARCH}.deb"
+DEB_NAME="remote-prover-${NETWORK}_${VERSION}_${ARCH}.deb"
 
 # Prefer fakeroot if available (GitHub-hosted runners usually have it)
 if command -v fakeroot >/dev/null 2>&1; then
