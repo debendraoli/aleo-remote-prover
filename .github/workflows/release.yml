@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }} (${{ inputs.network || 'mainnet' }})
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -46,7 +46,17 @@ jobs:
 
       - name: Set network
         id: network
-        run: echo "network=${{ inputs.network || 'mainnet' }}" >> $GITHUB_OUTPUT
+        run: |
+          # For workflow_dispatch, use the input. For tag push, detect from tag name.
+          if [ -n "${{ inputs.network }}" ]; then
+            NETWORK="${{ inputs.network }}"
+          elif [[ "${{ github.ref_name }}" == *-testnet* ]]; then
+            NETWORK="testnet"
+          else
+            NETWORK="mainnet"
+          fi
+          echo "network=$NETWORK" >> $GITHUB_OUTPUT
+          echo "Building for network: $NETWORK"
 
       - name: Build release binary
         run: |
