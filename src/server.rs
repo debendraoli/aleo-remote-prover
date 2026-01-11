@@ -204,14 +204,7 @@ async fn handle_prove(
         let endpoint = broadcast_endpoint();
         let client = state.config.http_client();
         info!("Broadcasting transaction {} to {}", transaction_id, endpoint);
-        let payload_string = response_json
-            .get("transaction_payload")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default()
-            .to_string();
-        let payload = serde_json::json!({
-            "transaction": payload_string,
-        });
+        let payload = transaction_value.clone();
 
         let broadcast_meta = match client.post(&endpoint).json(&payload).send().await {
             Ok(resp) => {
