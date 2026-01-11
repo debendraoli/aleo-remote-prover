@@ -23,13 +23,9 @@ async fn main() {
     let listen_addr = config.listen_addr();
 
     info!("Listen address: {}", listen_addr);
-    info!("Max concurrent proofs: {}", config.max_concurrent_proofs());
-    info!("Enforce program editions: {}", config.enforce_program_editions());
 
-    info!("Loading snarkvm process (this may take a while on first run)...");
     let process = Process::<CurrentNetwork>::load().expect("Failed to initialize snarkvm process");
     let process = Arc::new(RwLock::new(process));
-    info!("snarkvm process loaded successfully");
 
     let prove_route = prover_routes(process, config);
 

@@ -8,7 +8,6 @@ use crate::{
 use parking_lot::RwLock;
 use snarkvm::{prelude::Authorization, synthesizer::Process};
 use std::{str::FromStr, sync::Arc};
-use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 use warp::{http::StatusCode, Filter};
 
@@ -16,19 +15,13 @@ use warp::{http::StatusCode, Filter};
 struct ProverState {
     process: Arc<RwLock<Process<CurrentNetwork>>>,
     config: Arc<ProverConfig>,
-    limiter: Arc<Semaphore>,
 }
 
 pub fn prover_routes(
     process: Arc<RwLock<Process<CurrentNetwork>>>,
     config: Arc<ProverConfig>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let limiter = Arc::new(Semaphore::new(config.max_concurrent_proofs().max(1)));
-    let state = ProverState {
-        process,
-        config,
-        limiter,
-    };
+    let state = ProverState { process, config };
 
     let prove_route = warp::path("prove")
         .and(warp::post())
@@ -106,19 +99,11 @@ async fn handle_prove(
         }
     }
 
-    info!("Acquiring semaphore permit for proof generation...");
-    let permit = state
-        .limiter
-        .clone()
-        .acquire_owned()
-        .await
-        .expect("Semaphore closed");
-    info!("Permit acquired. Starting proof generation...");
+    info!("Starting proof generation...");
 
     let process_for_exec = state.process.clone();
     let endpoint = state.config.endpoint().to_string();
     let fee_authorization_for_exec = fee_authorization.clone();
-    let enforce_program_editions = state.config.enforce_program_editions();
 
     let proving_join = tokio::task::spawn_blocking(move || {
         prove_transaction(
@@ -126,12 +111,9 @@ async fn handle_prove(
             authorization,
             fee_authorization_for_exec,
             endpoint,
-            enforce_program_editions,
         )
     })
     .await;
-
-    drop(permit);
 
     let artifacts = match proving_join {
         Ok(Ok(artifacts)) => {

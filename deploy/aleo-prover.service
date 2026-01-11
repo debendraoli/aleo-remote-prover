@@ -23,7 +23,7 @@ Environment=ALEO_HOME=/var/lib/aleo-prover/.aleo
 # Prover configuration
 Environment=PROVER_LISTEN_ADDR=127.0.0.1:3030
 Environment=MAX_CONCURRENT_PROOFS=1
-Environment=ENFORCE_PROGRAM_EDITIONS=true
+Environment==true
 
 # Optional: Override the REST API endpoint for program fetching
 # Environment=REST_ENDPOINT_OVERRIDE=https://api.explorer.provable.com

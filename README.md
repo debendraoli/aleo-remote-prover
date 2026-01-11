@@ -14,8 +14,6 @@ cargo build --release
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROVER_LISTEN_ADDR` | `0.0.0.0:3030` | HTTP server bind address |
-| `MAX_CONCURRENT_PROOFS` | CPU cores | Maximum concurrent proof operations |
-| `ENFORCE_PROGRAM_EDITIONS` | `true` | Validate program editions against network |
 | `ENDPOINT` | `https://api.explorer.provable.com` | REST endpoint for state queries |
 
 ## API

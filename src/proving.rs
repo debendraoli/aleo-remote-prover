@@ -31,7 +31,6 @@ pub fn prove_transaction(
     authorization: Authorization<CurrentNetwork>,
     fee_authorization: Option<Authorization<CurrentNetwork>>,
     rest_endpoint: String,
-    enforce_program_editions: bool,
 ) -> Result<ProvingArtifacts, String> {
     let mut rng = rand::thread_rng();
     let query =
@@ -62,11 +61,9 @@ pub fn prove_transaction(
 
     let (response, mut trace) = {
         let guard = process.read();
-        if enforce_program_editions {
-            authorization
-                .check_valid_edition(&guard, consensus_version)
-                .map_err(|err| err.to_string())?;
-        }
+        authorization
+            .check_valid_edition(&guard, consensus_version)
+            .map_err(|err| err.to_string())?;
         authorization
             .check_valid_records(consensus_version)
             .map_err(|err| err.to_string())?;
@@ -120,11 +117,9 @@ pub fn prove_transaction(
     let (fee_for_transaction, fee_info) = if let Some(fee_auth) = fee_authorization {
         let mut fee_trace = {
             let guard = process.read();
-            if enforce_program_editions {
-                fee_auth
-                    .check_valid_edition(&guard, consensus_version)
-                    .map_err(|err| err.to_string())?;
-            }
+            fee_auth
+                .check_valid_edition(&guard, consensus_version)
+                .map_err(|err| err.to_string())?;
             fee_auth
                 .check_valid_records(consensus_version)
                 .map_err(|err| err.to_string())?;
