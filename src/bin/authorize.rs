@@ -1,34 +1,10 @@
-use clap::{ArgGroup, Parser, ValueEnum};
-use remote_prover::{CurrentAleo, CurrentNetwork, Network};
+use clap::{ArgGroup, Parser};
+use remote_prover::{network_api_base, CurrentAleo, CurrentNetwork};
 use reqwest::blocking::Client;
 use reqwest::Url;
 use snarkvm::prelude::{Address, Identifier, PrivateKey, Program, ProgramID, ViewKey};
 use snarkvm::synthesizer::Process;
 use std::{collections::HashSet, fs, io, path::PathBuf, str::FromStr, time::Duration};
-
-/// CLI-compatible network selection (maps to crate::Network)
-#[derive(Copy, Clone, Debug, ValueEnum)]
-enum NetworkTarget {
-    Mainnet,
-    Testnet,
-    Canary,
-}
-
-impl From<NetworkTarget> for Network {
-    fn from(target: NetworkTarget) -> Self {
-        match target {
-            NetworkTarget::Mainnet => Network::Mainnet,
-            NetworkTarget::Testnet => Network::Testnet,
-            NetworkTarget::Canary => Network::Canary,
-        }
-    }
-}
-
-impl NetworkTarget {
-    fn base_url(self) -> &'static str {
-        Network::from(self).base_url()
-    }
-}
 
 struct RemoteFetcher {
     client: Client,
@@ -51,8 +27,6 @@ impl RemoteFetcher {
         })
     }
 
-    /// Fetches the latest edition number for a program.
-    /// Returns `None` if the endpoint is unavailable or the program has no editions.
     fn fetch_latest_edition(
         &self,
         program_id: &str,
@@ -73,7 +47,12 @@ impl RemoteFetcher {
             .get(url.clone())
             .header("Accept", "application/json")
             .send()
-            .map_err(|e| with_context(format!("failed to fetch latest edition for '{program_id}'"), e))?;
+            .map_err(|e| {
+                with_context(
+                    format!("failed to fetch latest edition for '{program_id}'"),
+                    e,
+                )
+            })?;
 
         if !response.status().is_success() {
             // If 404, the program may not have editions yet
@@ -91,10 +70,12 @@ impl RemoteFetcher {
             .text()
             .map_err(|e| with_context("failed to read latest edition response", e))?;
 
-        let edition: u16 = body
-            .trim()
-            .parse()
-            .map_err(|e| with_context(format!("failed to parse edition number for '{program_id}'"), e))?;
+        let edition: u16 = body.trim().parse().map_err(|e| {
+            with_context(
+                format!("failed to parse edition number for '{program_id}'"),
+                e,
+            )
+        })?;
 
         Ok(Some(edition))
     }
@@ -176,11 +157,7 @@ struct Args {
     #[arg(long, value_name = "EDITION")]
     edition: Option<u16>,
 
-    /// Provable API network to query when using --program-id
-    #[arg(long, value_enum, default_value_t = NetworkTarget::Testnet)]
-    network: NetworkTarget,
-
-    /// Override the Provable API base URL
+    /// Override the Provable API base URL (default: uses compile-time network)
     #[arg(long, value_name = "URL")]
     api_base: Option<String>,
 
@@ -280,7 +257,7 @@ fn load_program(
     let base_url = args
         .api_base
         .as_deref()
-        .unwrap_or_else(|| args.network.base_url());
+        .unwrap_or_else(|| network_api_base());
 
     let fetcher = RemoteFetcher::new(base_url)?;
 
@@ -294,7 +271,9 @@ fn load_program(
     Ok((program, Some(fetcher)))
 }
 
-fn load_local_program(path: &PathBuf) -> Result<Program<CurrentNetwork>, Box<dyn std::error::Error>> {
+fn load_local_program(
+    path: &PathBuf,
+) -> Result<Program<CurrentNetwork>, Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)
         .map_err(|e| with_context(format!("failed to read program {}", path.display()), e))?;
 

@@ -1,15 +1,8 @@
-# Environment overrides for remote-prover (systemd service)
-#
-# Copy/edit this file as /etc/default/remote-prover
-
 # Bind address for HTTP server
 #PROVER_LISTEN_ADDR=0.0.0.0:3030
 
 # Max concurrent proving tasks
 #MAX_CONCURRENT_PROOFS=4
-
-# Network used for program fetching/broadcasting: mainnet|testnet|canary
-#NETWORK=testnet
 
 # Enforce program editions once network requires it
 #ENFORCE_PROGRAM_EDITIONS=true
