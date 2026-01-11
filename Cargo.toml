@@ -1,10 +1,10 @@
 [package]
 name = "remote-prover"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [features]
-default = ["mainnet"]
+default = ["testnet"]
 testnet = []
 mainnet = []
 
