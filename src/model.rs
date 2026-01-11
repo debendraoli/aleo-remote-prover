@@ -25,6 +25,4 @@ pub struct ProveRequest {
     pub fee_authorization: Option<AuthorizationPayload>,
     #[serde(default)]
     pub broadcast: Option<bool>,
-    #[serde(default)]
-    pub network: Option<crate::config::Network>,
 }

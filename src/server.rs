@@ -73,9 +73,7 @@ async fn handle_prove(
     };
 
     let client = state.config.http_client();
-    let request_network = req.network;
-    let effective_network = request_network.unwrap_or_else(|| state.config.network());
-    let api_base = effective_network.base_url();
+    let api_base = state.config.network().base_url();
 
     if let Err(err) =
         ensure_programs_available(&state.process, client, api_base, &authorization).await
