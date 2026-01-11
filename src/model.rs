@@ -14,13 +14,9 @@ impl AuthorizationPayload {
     }
 }
 
-/// JSON body expected by the `/prove` endpoint.
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct ProveRequest {
-    /// Primary execution authorization, typically the user's program call.
     pub authorization: AuthorizationPayload,
-    /// Optional authorization that produces the fee transition. Supply when the
-    /// main execution does not include a fee (e.g. wallets paying on behalf of users).
     #[serde(default)]
     pub fee_authorization: Option<AuthorizationPayload>,
     #[serde(default)]

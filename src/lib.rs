@@ -10,6 +10,10 @@ pub type CurrentNetwork = snarkvm::prelude::TestnetV0;
 #[cfg(feature = "mainnet")]
 pub type CurrentNetwork = snarkvm::prelude::MainnetV0;
 
+#[cfg(feature = "testnet")]
+pub type CurrentAleo = snarkvm::circuit::AleoTestnetV0;
+
+#[cfg(feature = "mainnet")]
 pub type CurrentAleo = snarkvm::circuit::AleoV0;
 
 pub mod config;

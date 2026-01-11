@@ -97,7 +97,8 @@ async fn handle_prove(
         .expect("Semaphore closed");
 
     let process_for_exec = state.process.clone();
-    let rest_endpoint = state.config.rest_endpoint_for(effective_network);
+    let network = state.config.network();
+    let rest_endpoint = state.config.rest_endpoint_for(network);
     let fee_authorization_for_exec = fee_authorization.clone();
     let enforce_program_editions = state.config.enforce_program_editions();
 
@@ -148,7 +149,7 @@ async fn handle_prove(
 
     let mut response_json = serde_json::json!({
         "status": "success",
-        "network": effective_network,
+        "network": format!("{:?}", network).to_lowercase(),
         "transaction_id": transaction_id,
         "transaction_type": transaction_type,
         "execution_id": artifacts.execution_id,
@@ -168,7 +169,7 @@ async fn handle_prove(
 
     let broadcast_requested = req.broadcast.unwrap_or(true);
     if broadcast_requested {
-        let endpoint = effective_network.broadcast_endpoint();
+        let endpoint = network.broadcast_endpoint();
         let client = state.config.http_client();
         let payload_string = response_json
             .get("transaction_payload")
