@@ -1,5 +1,5 @@
 use crate::{
-    config::ProverConfig,
+    config::{broadcast_endpoint, network_api_base, network_name, ProverConfig},
     model::{AuthorizationPayload, ProveRequest},
     programs::ensure_programs_available,
     proving::prove_transaction,
@@ -73,7 +73,7 @@ async fn handle_prove(
     };
 
     let client = state.config.http_client();
-    let api_base = state.config.network().base_url();
+    let api_base = network_api_base();
 
     if let Err(err) =
         ensure_programs_available(&state.process, client, api_base, &authorization).await
@@ -97,8 +97,7 @@ async fn handle_prove(
         .expect("Semaphore closed");
 
     let process_for_exec = state.process.clone();
-    let network = state.config.network();
-    let rest_endpoint = state.config.rest_endpoint_for(network);
+    let rest_endpoint = state.config.rest_endpoint();
     let fee_authorization_for_exec = fee_authorization.clone();
     let enforce_program_editions = state.config.enforce_program_editions();
 
@@ -149,7 +148,7 @@ async fn handle_prove(
 
     let mut response_json = serde_json::json!({
         "status": "success",
-        "network": format!("{:?}", network).to_lowercase(),
+        "network": network_name(),
         "transaction_id": transaction_id,
         "transaction_type": transaction_type,
         "execution_id": artifacts.execution_id,
@@ -169,7 +168,7 @@ async fn handle_prove(
 
     let broadcast_requested = req.broadcast.unwrap_or(true);
     if broadcast_requested {
-        let endpoint = network.broadcast_endpoint();
+        let endpoint = broadcast_endpoint();
         let client = state.config.http_client();
         let payload_string = response_json
             .get("transaction_payload")

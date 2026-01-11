@@ -1,60 +1,43 @@
 use reqwest::Client;
-use std::{env, net::SocketAddr, str::FromStr};
+use std::{env, net::SocketAddr};
 
-#[derive(Copy, Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Network {
-    Mainnet,
-    Testnet,
-    Canary,
-}
+/// API base URL for the Aleo explorer (without version/network suffix).
+pub const API_BASE_URL: &str = "https://api.explorer.provable.com";
 
-impl Network {
-    pub fn base_url(self) -> &'static str {
-        match self {
-            Network::Mainnet => "https://api.explorer.provable.com/v2/mainnet",
-            Network::Testnet => "https://api.explorer.provable.com/v2/testnet",
-            Network::Canary => "https://api.explorer.provable.com/v2/canary",
-        }
+/// Returns the versioned API endpoint for the current network.
+/// Uses compile-time feature flags to determine the network.
+pub fn network_api_base() -> &'static str {
+    #[cfg(feature = "testnet")]
+    {
+        "https://api.explorer.provable.com/v2/testnet"
     }
-
-    pub fn endpoint(self, path: &str) -> String {
-        let base = self.base_url().trim_end_matches('/');
-        let path = path.trim_start_matches('/');
-        format!("{base}/{path}")
-    }
-
-    pub fn broadcast_endpoint(self) -> String {
-        self.endpoint("transaction/broadcast")
-    }
-
-    pub fn rest_base_url(self) -> String {
-        match self {
-            Network::Mainnet | Network::Testnet | Network::Canary => {
-                "https://api.explorer.provable.com".to_string()
-            }
-        }
+    #[cfg(feature = "mainnet")]
+    {
+        "https://api.explorer.provable.com/v2/mainnet"
     }
 }
 
-impl FromStr for Network {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "mainnet" => Ok(Network::Mainnet),
-            "testnet" => Ok(Network::Testnet),
-            "canary" => Ok(Network::Canary),
-            other => Err(format!("invalid network '{other}'")),
-        }
+/// Returns the network name as a string.
+pub fn network_name() -> &'static str {
+    #[cfg(feature = "testnet")]
+    {
+        "testnet"
     }
+    #[cfg(feature = "mainnet")]
+    {
+        "mainnet"
+    }
+}
+
+/// Returns the transaction broadcast endpoint for the current network.
+pub fn broadcast_endpoint() -> String {
+    format!("{}/transaction/broadcast", network_api_base())
 }
 
 #[derive(Clone)]
 pub struct ProverConfig {
     listen_addr: SocketAddr,
     max_concurrent_proofs: usize,
-    network: Network,
     http_client: Client,
     enforce_program_editions: bool,
     rest_endpoint_override: Option<String>,
@@ -70,7 +53,6 @@ impl Default for ProverConfig {
         Self {
             listen_addr,
             max_concurrent_proofs: max_parallel,
-            network: Network::Testnet,
             http_client: Client::new(),
             enforce_program_editions: true,
             rest_endpoint_override: None,
@@ -86,8 +68,8 @@ impl ProverConfig {
             match addr.parse::<SocketAddr>() {
                 Ok(parsed) => config.listen_addr = parsed,
                 Err(_) => eprintln!(
-                    "⚠️  Invalid PROVER_LISTEN_ADDR '{addr}', keeping {}",
-                    config.listen_addr
+                    "Invalid PROVER_LISTEN_ADDR '{}', using default {}",
+                    addr, config.listen_addr
                 ),
             }
         }
@@ -96,24 +78,9 @@ impl ProverConfig {
             match limit.parse::<usize>() {
                 Ok(value) if value > 0 => config.max_concurrent_proofs = value,
                 _ => eprintln!(
-                    "⚠️  Invalid MAX_CONCURRENT_PROOFS '{limit}', keeping {}",
-                    config.max_concurrent_proofs
+                    "Invalid MAX_CONCURRENT_PROOFS '{}', using default {}",
+                    limit, config.max_concurrent_proofs
                 ),
-            }
-        }
-
-        if let Ok(network) = env::var("NETWORK") {
-            let trimmed = network.trim();
-            if trimmed.is_empty() {
-                eprintln!("⚠️  NETWORK is empty, keeping {:?}", config.network);
-            } else {
-                match Network::from_str(trimmed) {
-                    Ok(target) => config.network = target,
-                    Err(err) => eprintln!(
-                        "⚠️  Invalid NETWORK '{network}': {err}. Keeping {:?}",
-                        config.network
-                    ),
-                }
             }
         }
 
@@ -121,17 +88,16 @@ impl ProverConfig {
             match parse_bool(&flag) {
                 Some(value) => config.enforce_program_editions = value,
                 None => eprintln!(
-                    "⚠️  Invalid ENFORCE_PROGRAM_EDITIONS '{flag}', keeping {}",
-                    config.enforce_program_editions
+                    "Invalid ENFORCE_PROGRAM_EDITIONS '{}', using default {}",
+                    flag, config.enforce_program_editions
                 ),
             }
         }
 
         if let Ok(endpoint) = env::var("REST_ENDPOINT_OVERRIDE") {
-            if endpoint.trim().is_empty() {
-                eprintln!("⚠️  REST_ENDPOINT_OVERRIDE is empty, ignoring override");
-            } else {
-                config.rest_endpoint_override = Some(endpoint);
+            let trimmed = endpoint.trim();
+            if !trimmed.is_empty() {
+                config.rest_endpoint_override = Some(trimmed.to_string());
             }
         }
 
@@ -146,24 +112,20 @@ impl ProverConfig {
         self.max_concurrent_proofs
     }
 
-    pub fn broadcast_endpoint(&self) -> String {
-        self.network.broadcast_endpoint()
-    }
-
-    pub fn network(&self) -> Network {
-        self.network
-    }
-
-    pub fn api_base(&self) -> &'static str {
-        self.network.base_url()
-    }
-
     pub fn http_client(&self) -> &Client {
         &self.http_client
     }
 
     pub fn enforce_program_editions(&self) -> bool {
         self.enforce_program_editions
+    }
+
+    /// Returns the REST API endpoint for fetching programs.
+    /// Uses override if set, otherwise uses the default API base.
+    pub fn rest_endpoint(&self) -> String {
+        self.rest_endpoint_override
+            .clone()
+            .unwrap_or_else(|| API_BASE_URL.to_string())
     }
 
     #[cfg(test)]
@@ -177,13 +139,6 @@ impl ProverConfig {
     pub fn with_enforce_program_editions(mut self, enforce: bool) -> Self {
         self.enforce_program_editions = enforce;
         self
-    }
-
-    pub fn rest_endpoint_for(&self, network: Network) -> String {
-        self.rest_endpoint_override
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| network.rest_base_url())
     }
 
     pub fn with_rest_endpoint_override<S: Into<String>>(mut self, endpoint: S) -> Self {

@@ -1,0 +1,56 @@
+[Unit]
+Description=Aleo Remote Prover Service
+Documentation=https://github.com/debendraoli/aleo-remote-prover
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aleo-prover
+Group=aleo-prover
+
+# Working directory where the prover runs
+WorkingDirectory=/opt/aleo-prover
+
+# The prover binary (installed from .deb package)
+ExecStart=/usr/bin/aleo-remote-prover
+
+# Environment configuration
+# ALEO_HOME: Directory for storing snarkvm parameters and circuit keys
+# Ensure this directory exists and is writable by the service user
+Environment=ALEO_HOME=/var/lib/aleo-prover/.aleo
+
+# Prover configuration
+Environment=PROVER_LISTEN_ADDR=127.0.0.1:3030
+Environment=MAX_CONCURRENT_PROOFS=1
+Environment=ENFORCE_PROGRAM_EDITIONS=true
+
+# Optional: Override the REST API endpoint for program fetching
+# Environment=REST_ENDPOINT_OVERRIDE=https://api.explorer.provable.com
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Resource limits (proving is CPU and memory intensive)
+# Adjust based on your hardware
+LimitNOFILE=65536
+MemoryMax=32G
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+
+# Allow write access to ALEO_HOME directory
+ReadWritePaths=/var/lib/aleo-prover
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aleo-prover
+
+[Install]
+WantedBy=multi-user.target
