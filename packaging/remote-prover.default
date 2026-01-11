@@ -8,7 +8,7 @@
 # Max concurrent proving tasks
 #MAX_CONCURRENT_PROOFS=4
 
-# Network used for program fetching/broadcasting: mainnet|testnet|canary
+# Network is determined at compile time (use cargo build --features mainnet|testnet)
 #NETWORK=testnet
 
 # Enforce program editions once network requires it

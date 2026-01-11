@@ -13,6 +13,12 @@ ExecStart=/usr/bin/remote-prover
 Restart=on-failure
 RestartSec=3
 
+# Resource limits
+LimitNOFILE=65536
+
+# Environment
+Environment=ALEO_HOME=/var/lib/remote-prover/.aleo
+
 # Hardening
 NoNewPrivileges=true
 PrivateTmp=true

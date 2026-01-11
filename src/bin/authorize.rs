@@ -47,7 +47,12 @@ impl RemoteFetcher {
             .get(url.clone())
             .header("Accept", "application/json")
             .send()
-            .map_err(|e| with_context(format!("failed to fetch latest edition for '{program_id}'"), e))?;
+            .map_err(|e| {
+                with_context(
+                    format!("failed to fetch latest edition for '{program_id}'"),
+                    e,
+                )
+            })?;
 
         if !response.status().is_success() {
             // If 404, the program may not have editions yet
@@ -65,10 +70,12 @@ impl RemoteFetcher {
             .text()
             .map_err(|e| with_context("failed to read latest edition response", e))?;
 
-        let edition: u16 = body
-            .trim()
-            .parse()
-            .map_err(|e| with_context(format!("failed to parse edition number for '{program_id}'"), e))?;
+        let edition: u16 = body.trim().parse().map_err(|e| {
+            with_context(
+                format!("failed to parse edition number for '{program_id}'"),
+                e,
+            )
+        })?;
 
         Ok(Some(edition))
     }
@@ -264,7 +271,9 @@ fn load_program(
     Ok((program, Some(fetcher)))
 }
 
-fn load_local_program(path: &PathBuf) -> Result<Program<CurrentNetwork>, Box<dyn std::error::Error>> {
+fn load_local_program(
+    path: &PathBuf,
+) -> Result<Program<CurrentNetwork>, Box<dyn std::error::Error>> {
     let source = fs::read_to_string(path)
         .map_err(|e| with_context(format!("failed to read program {}", path.display()), e))?;
 

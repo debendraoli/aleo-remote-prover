@@ -25,7 +25,6 @@ pub async fn fetch_latest_edition(
         .map_err(|err| format!("Failed to fetch latest edition for '{program_id}': {err}"))?;
 
     if !response.status().is_success() {
-        // If the endpoint returns 404, the program may not have editions
         if response.status().as_u16() == 404 {
             return Ok(None);
         }
@@ -144,13 +143,11 @@ pub async fn fetch_remote_program_with_edition(
     base: &Url,
     program_id: &ProgramID<CurrentNetwork>,
 ) -> Result<(Program<CurrentNetwork>, u16), String> {
-    // First, fetch the latest edition for this program
     let edition = fetch_latest_edition(client, base, program_id)
         .await?
         .unwrap_or(0);
 
-    let url = build_program_url(base, program_id, Some(edition))?;
-
+    let url = build_program_url(base, program_id, Some(edition))?
     eprintln!(
         "ℹ️  Fetching program '{}' (edition {}) from {}",
         program_id,
