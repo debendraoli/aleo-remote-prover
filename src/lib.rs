@@ -24,5 +24,5 @@ mod proving;
 mod server;
 
 pub use config::{broadcast_endpoint, network_api_base, network_name, ProverConfig, API_BASE_URL};
-pub use model::{AuthorizationPayload, ProveRequest};
+pub use model::ProveRequest;
 pub use server::prover_routes;

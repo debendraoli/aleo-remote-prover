@@ -35,7 +35,7 @@ pub struct ProverConfig {
     max_concurrent_proofs: usize,
     http_client: Client,
     enforce_program_editions: bool,
-    rest_endpoint_override: Option<String>,
+    endpoint: String,
 }
 
 impl Default for ProverConfig {
@@ -50,7 +50,7 @@ impl Default for ProverConfig {
             max_concurrent_proofs: max_parallel,
             http_client: Client::new(),
             enforce_program_editions: true,
-            rest_endpoint_override: None,
+            endpoint: API_BASE_URL.to_string(),
         }
     }
 }
@@ -89,10 +89,10 @@ impl ProverConfig {
             }
         }
 
-        if let Ok(endpoint) = env::var("REST_ENDPOINT_OVERRIDE") {
+        if let Ok(endpoint) = env::var("ENDPOINT") {
             let trimmed = endpoint.trim();
             if !trimmed.is_empty() {
-                config.rest_endpoint_override = Some(trimmed.to_string());
+                config.endpoint = trimmed.to_string();
             }
         }
 
@@ -115,18 +115,8 @@ impl ProverConfig {
         self.enforce_program_editions
     }
 
-    pub fn rest_endpoint(&self) -> String {
-        self.rest_endpoint_override
-            .clone()
-            .unwrap_or_else(|| API_BASE_URL.to_string())
-    }
-
-    #[cfg(test)]
-    pub fn testing_with_enforced_program_editions(enforce: bool) -> Self {
-        Self {
-            enforce_program_editions: enforce,
-            ..Self::default()
-        }
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
     }
 
     pub fn with_enforce_program_editions(mut self, enforce: bool) -> Self {
@@ -134,8 +124,8 @@ impl ProverConfig {
         self
     }
 
-    pub fn with_rest_endpoint_override<S: Into<String>>(mut self, endpoint: S) -> Self {
-        self.rest_endpoint_override = Some(endpoint.into());
+    pub fn with_endpoint<S: Into<String>>(mut self, endpoint: S) -> Self {
+        self.endpoint = endpoint.into();
         self
     }
 }

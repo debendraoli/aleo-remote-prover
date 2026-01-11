@@ -1,6 +1,6 @@
 use crate::{
     config::{broadcast_endpoint, network_api_base, network_name, ProverConfig},
-    model::{AuthorizationPayload, ProveRequest},
+    model::ProveRequest,
     programs::ensure_programs_available,
     proving::prove_transaction,
     CurrentNetwork,
@@ -63,7 +63,7 @@ async fn handle_prove(
         req.broadcast.unwrap_or(true)
     );
 
-    let authorization = match parse_authorization_payload("authorization", &req.authorization) {
+    let authorization = match parse_authorization("authorization", &req.authorization) {
         Ok(auth) => auth,
         Err(err) => {
             warn!("Invalid authorization payload: {}", err);
@@ -73,7 +73,7 @@ async fn handle_prove(
     debug!("Authorization payload parsed successfully.");
 
     let fee_authorization = match req.fee_authorization.as_ref() {
-        Some(payload) => match parse_authorization_payload("fee_authorization", payload) {
+        Some(payload) => match parse_authorization("fee_authorization", payload) {
             Ok(auth) => Some(auth),
             Err(err) => {
                 warn!("Invalid fee authorization payload: {}", err);
@@ -116,7 +116,7 @@ async fn handle_prove(
     info!("Permit acquired. Starting proof generation...");
 
     let process_for_exec = state.process.clone();
-    let rest_endpoint = state.config.rest_endpoint();
+    let endpoint = state.config.endpoint().to_string();
     let fee_authorization_for_exec = fee_authorization.clone();
     let enforce_program_editions = state.config.enforce_program_editions();
 
@@ -125,7 +125,7 @@ async fn handle_prove(
             process_for_exec,
             authorization,
             fee_authorization_for_exec,
-            rest_endpoint,
+            endpoint,
             enforce_program_editions,
         )
     })
@@ -218,7 +218,7 @@ async fn handle_prove(
                 };
 
                 if status.is_success() {
-                    info!("Broadcast successful: Status {}", status);
+                    info!(": Status {}", status);
                 } else {
                     warn!("Broadcast returned error status: {}. Body: {}", status, body);
                 }
@@ -260,12 +260,11 @@ async fn handle_prove(
     Ok(json_reply(StatusCode::OK, response_json))
 }
 
-fn parse_authorization_payload(
+fn parse_authorization(
     label: &str,
-    payload: &AuthorizationPayload,
+    payload: &serde_json::Value,
 ) -> Result<Authorization<CurrentNetwork>, String> {
-    let json = payload
-        .to_compact_string()
+    let json = serde_json::to_string(payload)
         .map_err(|err| format!("Invalid {label} payload: {err}"))?;
     Authorization::<CurrentNetwork>::from_str(&json)
         .map_err(|err| format!("Error parsing {label}: {err}"))
