@@ -147,7 +147,7 @@ pub async fn fetch_remote_program_with_edition(
         .await?
         .unwrap_or(0);
 
-    let url = build_program_url(base, program_id, Some(edition))?
+    let url = build_program_url(base, program_id, Some(edition))?;
     eprintln!(
         "ℹ️  Fetching program '{}' (edition {}) from {}",
         program_id,
