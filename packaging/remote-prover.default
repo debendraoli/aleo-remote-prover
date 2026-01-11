@@ -9,3 +9,9 @@
 
 # Override REST endpoint used for state queries
 #REST_ENDPOINT_OVERRIDE=
+
+# HOME directory for prover data (snarkvm parameters, keys, etc.)
+HOME=/var/lib/remote-prover
+
+# Log level (error, warn, info, debug, trace)
+#RUST_LOG=info

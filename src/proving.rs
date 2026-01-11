@@ -79,6 +79,7 @@ pub fn prove_transaction(
     let execution = trace
         .prove_execution::<CurrentAleo, _>(&locator, varuna_version, &mut rng)
         .map_err(|err| err.to_string())?;
+
     let execution_id = execution
         .to_execution_id()
         .map_err(|err| err.to_string())?

@@ -4,6 +4,7 @@ use reqwest::Url;
 use snarkvm::prelude::*;
 use snarkvm::synthesizer::Process;
 use std::{collections::HashSet, str::FromStr, sync::Arc};
+use tracing::info;
 
 struct ProgramWithEdition {
     program: Program<CurrentNetwork>,
@@ -148,8 +149,8 @@ pub async fn fetch_remote_program_with_edition(
         .unwrap_or(0);
 
     let url = build_program_url(base, program_id, Some(edition))?;
-    eprintln!(
-        "ℹ️  Fetching program '{}' (edition {}) from {}",
+    info!(
+        "Fetching program '{}' (edition {}) from {}",
         program_id,
         edition,
         url.as_str()

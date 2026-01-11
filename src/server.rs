@@ -9,6 +9,7 @@ use parking_lot::RwLock;
 use snarkvm::{prelude::Authorization, synthesizer::Process};
 use std::{str::FromStr, sync::Arc};
 use tokio::sync::Semaphore;
+use tracing::{debug, error, info, warn};
 use warp::{http::StatusCode, Filter};
 
 #[derive(Clone)]
@@ -57,27 +58,42 @@ async fn handle_prove(
     req: ProveRequest,
     state: ProverState,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    println!("Received proving request...");
+    info!(
+        "Received proving request. Broadcast requested: {:?}",
+        req.broadcast.unwrap_or(true)
+    );
 
     let authorization = match parse_authorization_payload("authorization", &req.authorization) {
         Ok(auth) => auth,
-        Err(err) => return Ok(bad_request(err)),
+        Err(err) => {
+            warn!("Invalid authorization payload: {}", err);
+            return Ok(bad_request(err));
+        }
     };
+    debug!("Authorization payload parsed successfully.");
 
     let fee_authorization = match req.fee_authorization.as_ref() {
         Some(payload) => match parse_authorization_payload("fee_authorization", payload) {
             Ok(auth) => Some(auth),
-            Err(err) => return Ok(bad_request(err)),
+            Err(err) => {
+                warn!("Invalid fee authorization payload: {}", err);
+                return Ok(bad_request(err));
+            }
         },
         None => None,
     };
+    if fee_authorization.is_some() {
+        debug!("Fee authorization payload parsed successfully.");
+    }
 
     let client = state.config.http_client();
     let api_base = network_api_base();
 
+    debug!("Ensuring programs are available locally...");
     if let Err(err) =
         ensure_programs_available(&state.process, client, api_base, &authorization).await
     {
+        error!("Failed to ensure programs available: {}", err);
         return Ok(error_reply(err));
     }
 
@@ -85,16 +101,19 @@ async fn handle_prove(
         if let Err(err) =
             ensure_programs_available(&state.process, client, api_base, fee_auth).await
         {
+            error!("Failed to ensure fee programs available: {}", err);
             return Ok(error_reply(err));
         }
     }
 
+    info!("Acquiring semaphore permit for proof generation...");
     let permit = state
         .limiter
         .clone()
         .acquire_owned()
         .await
         .expect("Semaphore closed");
+    info!("Permit acquired. Starting proof generation...");
 
     let process_for_exec = state.process.clone();
     let rest_endpoint = state.config.rest_endpoint();
@@ -115,14 +134,26 @@ async fn handle_prove(
     drop(permit);
 
     let artifacts = match proving_join {
-        Ok(Ok(artifacts)) => artifacts,
-        Ok(Err(err)) => return Ok(error_reply(err)),
+        Ok(Ok(artifacts)) => {
+            info!(
+                "Proof generation successful. Execution ID: {}",
+                artifacts.execution_id
+            );
+            artifacts
+        }
+        Ok(Err(err)) => {
+            error!("Proof generation failed w/ logic error: {}", err);
+            return Ok(error_reply(err));
+        }
         Err(join_error) => {
+            error!("Worker panicked while proving: {}", join_error);
             return Ok(error_reply(format!("Worker panicked while proving: {join_error}")));
         }
     };
 
     let transaction_id = format!("{:?}", artifacts.transaction.id());
+    info!("Transaction ID: {}", transaction_id);
+
     let transaction_type = if artifacts.transaction.is_deploy() {
         "deploy"
     } else if artifacts.transaction.is_fee() {
@@ -134,6 +165,7 @@ async fn handle_prove(
     let transaction_string = match serde_json::to_string(&artifacts.transaction) {
         Ok(value) => value,
         Err(err) => {
+            error!("Failed to serialize transaction: {}", err);
             return Ok(error_reply(format!("Failed to serialize transaction: {err}")));
         }
     };
@@ -141,6 +173,7 @@ async fn handle_prove(
     let transaction_value: serde_json::Value = match serde_json::from_str(&transaction_string) {
         Ok(value) => value,
         Err(err) => {
+            error!("Failed to parse transaction JSON: {}", err);
             return Ok(error_reply(format!("Failed to parse transaction JSON: {err}")));
         }
     };
@@ -170,6 +203,7 @@ async fn handle_prove(
     if broadcast_requested {
         let endpoint = broadcast_endpoint();
         let client = state.config.http_client();
+        info!("Broadcasting transaction {} to {}", transaction_id, endpoint);
         let payload_string = response_json
             .get("transaction_payload")
             .and_then(|value| value.as_str())
@@ -184,8 +218,17 @@ async fn handle_prove(
                 let status = resp.status();
                 let body = match resp.text().await {
                     Ok(text) => truncate_for_log(&text, 256),
-                    Err(err) => format!("<error reading body: {err}>"),
+                    Err(err) => {
+                        error!("Error reading broadcast response body: {}", err);
+                        format!("<error reading body: {err}>")
+                    }
                 };
+
+                if status.is_success() {
+                    info!("Broadcast successful: Status {}", status);
+                } else {
+                    warn!("Broadcast returned error status: {}. Body: {}", status, body);
+                }
 
                 serde_json::json!({
                     "requested": true,
@@ -196,13 +239,16 @@ async fn handle_prove(
                     "payload_preview": transaction_preview,
                 })
             }
-            Err(err) => serde_json::json!({
-                "requested": true,
-                "endpoint": endpoint,
-                "success": false,
-                "error": err.to_string(),
-                "payload_preview": transaction_preview,
-            }),
+            Err(err) => {
+                error!("Broadcast request failed: {}", err);
+                serde_json::json!({
+                    "requested": true,
+                    "endpoint": endpoint,
+                    "success": false,
+                    "error": err.to_string(),
+                    "payload_preview": transaction_preview,
+                })
+            }
         };
 
         if let Some(object) = response_json.as_object_mut() {
@@ -215,6 +261,7 @@ async fn handle_prove(
                 "requested": false,
             }),
         );
+        info!("Broadcast skipped (not requested).");
     }
 
     Ok(json_reply(StatusCode::OK, response_json))

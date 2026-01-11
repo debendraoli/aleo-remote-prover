@@ -23,6 +23,8 @@ parking_lot = "0.12"
 dotenvy = "0.15"
 rand = "0.8"
 snarkvm = { version = "4.0" }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [profile.release]
 opt-level = 3

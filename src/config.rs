@@ -115,8 +115,6 @@ impl ProverConfig {
         self.enforce_program_editions
     }
 
-    /// Returns the REST API endpoint for fetching programs.
-    /// Uses override if set, otherwise uses the default API base.
     pub fn rest_endpoint(&self) -> String {
         self.rest_endpoint_override
             .clone()

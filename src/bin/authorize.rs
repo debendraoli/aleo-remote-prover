@@ -261,7 +261,6 @@ fn load_program(
 
     let fetcher = RemoteFetcher::new(base_url)?;
 
-    // Use explicit edition if provided, otherwise fetch the latest edition
     let edition = match args.edition {
         Some(e) => Some(e),
         None => fetcher.fetch_latest_edition(program_id)?,

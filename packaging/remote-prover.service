@@ -18,7 +18,6 @@ LimitNOFILE=65536
 
 # Environment
 Environment=HOME=/var/lib/remote-prover
-Environment=ALEO_HOME=/var/lib/remote-prover/.aleo
 
 # Hardening
 NoNewPrivileges=true
