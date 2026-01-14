@@ -133,7 +133,7 @@ async fn handle_prove(
         }
     };
 
-    let transaction_id = format!("{:?}", artifacts.transaction.id());
+    let transaction_id = artifacts.transaction.id().to_string();
     info!("Transaction ID: {}", transaction_id);
 
     let transaction_type = if artifacts.transaction.is_deploy() {
