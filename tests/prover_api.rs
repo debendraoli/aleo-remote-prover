@@ -1,9 +1,7 @@
 use parking_lot::RwLock;
 use std::{str::FromStr, sync::Arc};
 
-use remote_prover::{
-    prover_routes, AuthorizationPayload, CurrentAleo, CurrentNetwork, ProveRequest, ProverConfig,
-};
+use remote_prover::{prover_routes, CurrentAleo, CurrentNetwork, ProveRequest, ProverConfig};
 use serde_json::Value;
 use snarkvm::{
     prelude::{Identifier, PrivateKey, Program},
@@ -27,9 +25,7 @@ async fn healthcheck_root_returns_ok() {
         Process::<CurrentNetwork>::load().expect("failed to load process"),
     ));
     let config = Arc::new(
-        ProverConfig::default()
-            .with_enforce_program_editions(false)
-            .with_rest_endpoint_override(static_query_payload()),
+        ProverConfig::default().with_endpoint(static_query_payload()),
     );
     let routes = prover_routes(process, config);
 
@@ -84,20 +80,17 @@ function add_public:
         .expect("failed to authorize execution");
 
     let process = Arc::new(RwLock::new(process_instance));
-    let authorization_value = serde_json::from_str(&authorization.to_string())
+    let authorization_value: serde_json::Value = serde_json::from_str(&authorization.to_string())
         .expect("authorization should be valid JSON");
 
     let request_body = ProveRequest {
-        authorization: AuthorizationPayload::Json(authorization_value),
+        authorization: authorization_value,
         broadcast: Some(false),
-        network: None,
         fee_authorization: None,
     };
 
     let config = Arc::new(
-        ProverConfig::default()
-            .with_enforce_program_editions(false)
-            .with_rest_endpoint_override(static_query_payload()),
+        ProverConfig::default().with_endpoint(static_query_payload()),
     );
     let routes = prover_routes(process, config);
 
