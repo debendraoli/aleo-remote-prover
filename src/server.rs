@@ -187,12 +187,7 @@ async fn handle_prove(
         let client = state.config.http_client();
         info!("Broadcasting transaction {} to {}", transaction_id, endpoint);
 
-        // Provable Explorer API expects: {"transaction": "<stringified_transaction>"}
-        let payload = serde_json::json!({
-            "transaction": transaction_string
-        });
-
-        let broadcast_meta = match client.post(&endpoint).json(&payload).send().await {
+        let broadcast_meta = match client.post(&endpoint).json(&transaction_value).send().await {
             Ok(resp) => {
                 let status = resp.status();
                 let body = match resp.text().await {
