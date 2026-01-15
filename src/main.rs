@@ -1,5 +1,5 @@
 use parking_lot::RwLock;
-use remote_prover::{network_name, prover_routes, CurrentNetwork, ProverConfig};
+use remote_prover::{prover_routes, CurrentNetwork, ProverConfig, NETWORK};
 use snarkvm::synthesizer::Process;
 use std::sync::Arc;
 use tracing::info;
@@ -16,7 +16,7 @@ async fn main() {
         .init();
 
     info!("Aleo Remote Prover starting...");
-    info!("Network: {}", network_name());
+    info!("Network: {}", NETWORK);
     info!("HOME: {}", std::env::var("HOME").unwrap_or_else(|_| "~/.aleo (default)".to_string()));
 
     let config = Arc::new(ProverConfig::from_env());

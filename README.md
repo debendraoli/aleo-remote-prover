@@ -14,7 +14,6 @@ cargo build --release
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PROVER_LISTEN_ADDR` | `0.0.0.0:3030` | HTTP server bind address |
-| `ENDPOINT` | `https://api.explorer.provable.com` | REST endpoint for state queries |
 
 ## API
 

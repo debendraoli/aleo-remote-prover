@@ -1,5 +1,5 @@
 use clap::{ArgGroup, Parser};
-use remote_prover::{network_api_base, CurrentAleo, CurrentNetwork};
+use remote_prover::{CurrentAleo, CurrentNetwork, ProverConfig};
 use reqwest::blocking::Client;
 use reqwest::Url;
 use snarkvm::prelude::{Address, Identifier, PrivateKey, Program, ProgramID, ViewKey};
@@ -256,10 +256,10 @@ fn load_program(
 
     let base_url = args
         .api_base
-        .as_deref()
-        .unwrap_or_else(|| network_api_base());
+        .clone()
+        .unwrap_or_else(|| ProverConfig::network_api_base());
 
-    let fetcher = RemoteFetcher::new(base_url)?;
+    let fetcher = RemoteFetcher::new(&base_url)?;
 
     let edition = match args.edition {
         Some(e) => Some(e),

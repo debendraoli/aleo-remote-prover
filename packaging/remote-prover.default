@@ -4,12 +4,6 @@
 # Max concurrent proving tasks
 #MAX_CONCURRENT_PROOFS=4
 
-# Enforce program editions once network requires it
-#ENFORCE_PROGRAM_EDITIONS=true
-
-# Override REST endpoint used for state queries
-#REST_ENDPOINT_OVERRIDE=
-
 # HOME directory for prover data (snarkvm parameters, keys, etc.)
 HOME=/var/lib/remote-prover
 

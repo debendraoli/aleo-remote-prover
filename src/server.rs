@@ -1,9 +1,9 @@
 use crate::{
-    config::{broadcast_endpoint, network_api_base, network_name, ProverConfig},
+    config::ProverConfig,
     model::ProveRequest,
     programs::ensure_programs_available,
     proving::prove_transaction,
-    CurrentNetwork,
+    CurrentNetwork, NETWORK,
 };
 use parking_lot::RwLock;
 use snarkvm::{prelude::Authorization, synthesizer::Process};
@@ -80,11 +80,11 @@ async fn handle_prove(
     }
 
     let client = state.config.http_client();
-    let api_base = network_api_base();
+    let api_base = ProverConfig::network_api_base();
 
     debug!("Ensuring programs are available locally...");
     if let Err(err) =
-        ensure_programs_available(&state.process, client, api_base, &authorization).await
+        ensure_programs_available(&state.process, client, &api_base, &authorization).await
     {
         error!("Failed to ensure programs available: {}", err);
         return Ok(error_reply(err));
@@ -92,7 +92,7 @@ async fn handle_prove(
 
     if let Some(fee_auth) = &fee_authorization {
         if let Err(err) =
-            ensure_programs_available(&state.process, client, api_base, fee_auth).await
+            ensure_programs_available(&state.process, client, &api_base, fee_auth).await
         {
             error!("Failed to ensure fee programs available: {}", err);
             return Ok(error_reply(err));
@@ -102,7 +102,7 @@ async fn handle_prove(
     info!("Starting proof generation...");
 
     let process_for_exec = state.process.clone();
-    let endpoint = state.config.endpoint().to_string();
+    let endpoint = ProverConfig::network_api_base();
     let fee_authorization_for_exec = fee_authorization.clone();
 
     let proving_join = tokio::task::spawn_blocking(move || {
@@ -163,7 +163,7 @@ async fn handle_prove(
 
     let mut response_json = serde_json::json!({
         "status": "success",
-        "network": network_name(),
+        "network": NETWORK,
         "transaction_id": transaction_id,
         "transaction_type": transaction_type,
         "execution_id": artifacts.execution_id,
@@ -183,7 +183,7 @@ async fn handle_prove(
 
     let broadcast_requested = req.broadcast.unwrap_or(true);
     if broadcast_requested {
-        let endpoint = broadcast_endpoint();
+        let endpoint = ProverConfig::broadcast_endpoint();
         let client = state.config.http_client();
         info!("Broadcasting transaction {} to {}", transaction_id, endpoint);
 
