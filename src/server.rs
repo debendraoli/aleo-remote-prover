@@ -102,7 +102,7 @@ async fn handle_prove(
     info!("Starting proof generation...");
 
     let process_for_exec = state.process.clone();
-    let endpoint = ProverConfig::network_api_base();
+    let endpoint = ProverConfig::api_base_url();
     let fee_authorization_for_exec = fee_authorization.clone();
 
     let proving_join = tokio::task::spawn_blocking(move || {

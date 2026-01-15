@@ -44,8 +44,12 @@ impl ProverConfig {
         &self.http_client
     }
 
+    pub fn api_base_url() -> String {
+        API_BASE_URL.to_string()
+    }
+
     pub fn network_api_base() -> String {
-        format!("{}/v2/{}", API_BASE_URL, NETWORK)
+        format!("{}/v2/{}", Self::api_base_url(), NETWORK)
     }
 
     pub fn broadcast_endpoint() -> String {
