@@ -133,9 +133,6 @@ async fn handle_prove(
         }
     };
 
-    let transaction_id = artifacts.transaction.id().to_string();
-    info!("Transaction ID: {}", transaction_id);
-
     let transaction_type = if artifacts.transaction.is_deploy() {
         "deploy"
     } else if artifacts.transaction.is_fee() {
@@ -159,6 +156,22 @@ async fn handle_prove(
             return Ok(error_reply(format!("Failed to parse transaction JSON: {err}")));
         }
     };
+
+    let transaction_id = transaction_value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| artifacts.transaction.id().to_string());
+
+    let computed_id = artifacts.transaction.id().to_string();
+    if transaction_id != computed_id {
+        warn!(
+            "Transaction ID mismatch: JSON has '{}', computed is '{}'",
+            transaction_id, computed_id
+        );
+    }
+    info!("Transaction ID: {}", transaction_id);
+
     let transaction_preview = truncate_for_log(&transaction_string, 256);
 
     let mut response_json = serde_json::json!({
