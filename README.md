@@ -36,7 +36,7 @@ Generate proof and optionally broadcast transaction.
 ```
 
 - `authorization` – Aleo authorization object (required)
-- `fee_authorization` – Fee authorization object (optional)
+- `fee_authorization` – Fee authorization object (required)
 - `broadcast` – Broadcast transaction after proving (default: `true`)
 
 **Response:**
